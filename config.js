@@ -12,7 +12,7 @@ export const CONFIG = {
   // Buat pasangan kunci sekali dengan seller_tools/generate_keypair.py,
   // lalu tempel kunci PUBLIK-nya di sini. (Nilai di bawah adalah nilai yang
   // sama dengan backend lama, supaya kode aktivasi yang sudah terbit tetap valid.)
-  PUBLIC_KEY_HEX: '016e31afa502415ef41fc7acc9405e01fd1908525b332168ef3a2049b3247f77',
+  PUBLIC_KEY_HEX: '280ee0ea20a998ece254e96073419539e4f3ef1308c7dc84bdaa18932cc8b862',
 
   // OAuth Client ID untuk Google Drive (lihat docs/SETUP-GOOGLE-DRIVE.md).
   // Boleh dikosongkan: pengguna tetap bisa memasukkannya sendiri di halaman Google Drive.
