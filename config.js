@@ -16,5 +16,5 @@ export const CONFIG = {
 
   // OAuth Client ID untuk Google Drive (lihat docs/SETUP-GOOGLE-DRIVE.md).
   // Boleh dikosongkan: pengguna tetap bisa memasukkannya sendiri di halaman Google Drive.
-  GOOGLE_CLIENT_ID: '',
+  GOOGLE_CLIENT_ID: '235596828540-tjrbjjpk0s3cct67oa2dmi8s4oe4qodo.apps.googleusercontent.com',
 };
