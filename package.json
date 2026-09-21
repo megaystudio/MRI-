@@ -1,0 +1,22 @@
+{
+  "name": "mri-personal-workspace",
+  "version": "2.0.0",
+  "private": true,
+  "description": "MRI — Megay Recruitment Intelligent: workspace rekrutmen pribadi (static web app, data di browser).",
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build_sw.mjs && node tools/build_docs.mjs",
+    "serve": "python3 -m http.server 8000",
+    "test": "sh tests/run_all.sh"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "exceljs": "4.4.0",
+    "fake-indexeddb": "^6.2.5",
+    "jspdf": "2.5.2",
+    "jspdf-autotable": "3.8.4",
+    "jszip": "3.10.1",
+    "pdfjs-dist": "4.10.38",
+    "tweetnacl": "1.0.3"
+  }
+}

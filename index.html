@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#10141B" />
+<meta name="referrer" content="no-referrer" />
+<title>MRI — Megay Recruitment Intelligent</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- First run: create the personal workspace, or restore a backup (new device) -->
+<div class="login-screen" id="setupScreen" style="display:none">
+  <div class="login-card" style="max-width:440px">
+    <div class="brand" style="justify-content:center; margin-bottom:18px">
+      <div class="brand-mark">MRI</div>
+      <div class="brand-sub">Megay Recruitment Intelligent</div>
+    </div>
+    <div class="login-title">Selamat datang di Workspace Pribadi Anda</div>
+    <div class="login-desc">Data rekrutmen Anda disimpan di browser ini — tidak dikirim ke server mana pun. Nama Anda akan tercatat sebagai reviewer pada setiap keputusan.</div>
+    <form id="setupForm">
+      <div class="field"><label>Nama Lengkap Anda</label><input id="setupName" required minlength="2" autocomplete="name" /></div>
+      <div class="field"><label>Nama Workspace / Perusahaan (opsional)</label><input id="setupWorkspace" placeholder="mis. Rekrutmen PT Contoh" /></div>
+      <div id="setupError" class="login-error" style="display:none"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%; margin-top:6px">Mulai (Paket Demo — Gratis)</button>
+    </form>
+    <div class="setup-divider">
+      <div class="login-hint" style="margin:0 0 6px; text-align:left">Pindah perangkat / sudah punya backup?</div>
+      <div class="setup-actions">
+        <input type="file" id="setupRestoreFile" accept=".zip" style="display:none" onchange="setupRestoreFromFile(this.files[0]); this.value=''" />
+        <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('setupRestoreFile').click()">Pulihkan dari file backup…</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="setupDriveBtn" style="display:none" onclick="setupRestoreFromDrive()">Pulihkan dari Google Drive…</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="login-screen" id="blockedScreen" style="display:none">
+  <div class="login-card">
+    <div class="login-title">MRI sudah terbuka di tab lain</div>
+    <div class="login-desc">Agar data tidak saling menimpa, workspace hanya boleh dibuka di satu tab/jendela pada satu waktu. Tutup tab MRI yang lain, lalu muat ulang halaman ini.</div>
+    <button class="btn btn-primary" style="width:100%" onclick="location.reload()">Coba Lagi</button>
+  </div>
+</div>
+
+<div class="login-screen" id="fatalScreen" style="display:none">
+  <div class="login-card">
+    <div class="login-title" id="fatalTitle">Terjadi masalah</div>
+    <div class="login-desc" id="fatalDetail"></div>
+    <button class="btn btn-primary" style="width:100%" onclick="location.reload()">Muat Ulang</button>
+  </div>
+</div>
+
+<div class="app-shell" id="appShell" style="display:none">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">MRI</div>
+      <div class="brand-sub">Megay Recruitment Intelligent</div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <div class="nav-group-label">Operasi</div>
+      <button class="nav-item active" data-page="dashboard">01 · Executive Dashboard</button>
+      <button class="nav-item" data-page="intake">02 · CV Intake</button>
+      <button class="nav-item" data-page="screening">03 · Screening Center</button>
+      <button class="nav-item" data-page="bank">04 · CV Bank &amp; Search</button>
+      <button class="nav-item" data-page="pool">05 · Talent Pool</button>
+      <div class="nav-group-label">Konfigurasi</div>
+      <button class="nav-item" data-page="vacancies">06 · Job Requirement</button>
+      <button class="nav-item" data-page="knowledge">08 · Knowledge Center</button>
+      <div class="nav-group-label">Tata Kelola</div>
+      <button class="nav-item" data-page="audit">07 · Audit Trail</button>
+      <div class="nav-group-label">Employee</div>
+      <button class="nav-item" data-page="employees">09 · Employee Data Center</button>
+      <div class="nav-group-label">Akun &amp; Data</div>
+      <button class="nav-item" data-page="license">10 · Paket &amp; Upgrade</button>
+      <button class="nav-item" data-page="backup">11 · Data &amp; Backup</button>
+      <button class="nav-item" data-page="drive">12 · Google Drive</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-badge" id="userBadge"></div>
+      <div class="ai-status">
+        <span class="dot"></span>
+        AI Engine: <strong>rule-based-v1</strong>
+      </div>
+      <div id="licenseBadge"></div>
+      <div id="demoModeBadge"></div>
+      <div class="footer-note">MRI Personal Workspace</div>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <div class="backup-banner" id="backupBanner"></div>
+    <main class="content" id="content">
+      <!-- Pages injected by app.js -->
+    </main>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modal"></div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

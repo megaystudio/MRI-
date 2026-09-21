@@ -1,0 +1,14 @@
+{
+  "name": "MRI — Megay Recruitment Intelligent",
+  "short_name": "MRI",
+  "description": "Workspace rekrutmen pribadi untuk HR. Data disimpan di browser Anda.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10141B",
+  "theme_color": "#10141B",
+  "lang": "id",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
