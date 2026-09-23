@@ -10,6 +10,7 @@ import {
 import { verifyLicenseText, LicenseError } from './license.js';
 import { buildExcel, buildPdfReport } from './reports.js';
 import { generateDemoData, resetDemoData } from './demo.js';
+import { seedMasterNow } from './svc_master.js';
 import { nowIso, ymdCompact } from './util.js';
 import { CONFIG } from '../config.js';
 
@@ -63,6 +64,7 @@ export function seedWorkspaceDefaults() {
     DEFAULT_EMPLOYMENT_STATUSES.forEach((label, i) => DB.insert('employee_options', { category: 'employment_status', code: label, label, sequence: i, active: true }));
   }
   seedKnowledgeCenter();
+  seedMasterNow();
 }
 
 route('GET', '/api/profile', async () => getProfile(), { tx: false });

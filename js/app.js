@@ -7,7 +7,6 @@
  */
 const content = document.getElementById('content');
 const modalOverlay = document.getElementById('modalOverlay');
-const modal = document.getElementById('modal');
 const toastStack = document.getElementById('toastStack');
 
 let currentUser = null;   // workspace owner profile: { full_name, workspace_name }
@@ -47,6 +46,7 @@ function showSetup() {
 async function showApp() {
   showOnly('appShell');
   renderUserBadge();
+  updateMobileTitle(document.querySelector('#nav .nav-item.active'));
   routes.dashboard();
   initAppWidgets();
   refreshBackupBanner();
@@ -126,13 +126,102 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function openModal(html) {
-  modal.innerHTML = `<button class="modal-close" onclick="closeModal()">&times;</button>${html}`;
+/*
+ * Modal stack. openModal(html) REPLACES whatever is open (the original behaviour). openModal(html, {push:true})
+ * opens ON TOP: the layer below is only hidden (its inputs and state stay intact) and comes back when the top
+ * layer is closed — e.g. Candidate 360 → CV viewer → back to Candidate 360. `refresh` (optional) is an async
+ * function returning fresh HTML for a layer; it runs when the layer is revealed again.
+ */
+const modalLayers = [];
+const MODAL_CLOSE_BTN = '<button class="modal-close" onclick="closeModal()" aria-label="Tutup">&times;</button>';
+
+function openModal(html, opts = {}) {
+  if (!opts.push) { modalLayers.splice(0).forEach(l => l.el.remove()); }
+  else if (modalLayers.length) {
+    const top = modalLayers[modalLayers.length - 1].el;
+    top.style.display = 'none'; top.removeAttribute('id');
+  }
+  const el = document.createElement('div');
+  el.className = 'modal' + (opts.wide ? ' wide' : '');
+  el.id = 'modal';
+  el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+  el.innerHTML = MODAL_CLOSE_BTN + html;
+  modalOverlay.appendChild(el);
+  modalLayers.push({ el, refresh: opts.refresh || null });
   modalOverlay.classList.add('open');
+  modalOverlay.scrollTop = 0;
+  document.body.classList.add('modal-open');
+  return el;
 }
-function closeModal() { modalOverlay.classList.remove('open'); modal.innerHTML = ''; }
+
+function closeModal() {
+  const top = modalLayers.pop();
+  if (top) top.el.remove();
+  const next = modalLayers[modalLayers.length - 1];
+  if (next) {
+    next.el.id = 'modal'; next.el.style.display = '';
+    if (next.refresh) next.refresh().then(html => { next.el.innerHTML = MODAL_CLOSE_BTN + html; }).catch(() => {});
+  } else {
+    modalOverlay.classList.remove('open');
+    document.body.classList.remove('modal-open');
+  }
+}
+
+function closeAllModals() {
+  modalLayers.splice(0).forEach(l => l.el.remove());
+  modalOverlay.classList.remove('open');
+  document.body.classList.remove('modal-open');
+}
 modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) closeModal(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modalOverlay.classList.contains('open')) closeModal(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (modalOverlay.classList.contains('open')) closeModal();
+  else if (isNavOpen()) setNav(false);
+});
+
+// ------------------------------------------------------------------
+// Sidebar drawer (phones / tablets). On wide screens the sidebar is always visible.
+// ------------------------------------------------------------------
+const appShellEl = document.getElementById('appShell');
+const NAV_MQ = window.matchMedia('(max-width: 900px)');
+function isNavOpen() { return appShellEl.classList.contains('nav-open'); }
+
+function setNav(open) {
+  open = !!open && NAV_MQ.matches;
+  const wasOpen = isNavOpen();
+  appShellEl.classList.toggle('nav-open', open);
+  document.body.classList.toggle('nav-locked', open);
+  const btn = document.getElementById('navToggle');
+  btn.setAttribute('aria-expanded', String(open));
+  btn.setAttribute('aria-label', open ? 'Tutup menu' : 'Buka menu');
+  if (open) { const active = document.querySelector('#nav .nav-item.active') || document.querySelector('#nav .nav-item'); if (active) active.focus({ preventScroll: false }); }
+  else if (wasOpen) btn.focus({ preventScroll: true });
+}
+
+document.getElementById('navToggle').addEventListener('click', () => setNav(!isNavOpen()));
+document.getElementById('navClose').addEventListener('click', () => setNav(false));
+document.getElementById('sidebarBackdrop').addEventListener('click', () => setNav(false));
+NAV_MQ.addEventListener('change', () => setNav(false));
+
+// swipe: from the left edge opens, swipe left on the open drawer closes
+(() => {
+  let sx = null, sy = null;
+  document.addEventListener('touchstart', (e) => { const t = e.touches[0]; sx = t.clientX; sy = t.clientY; }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (sx === null || !NAV_MQ.matches || modalOverlay.classList.contains('open')) { sx = null; return; }
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = Math.abs(t.clientY - sy);
+    if (dy < 50) {
+      if (!isNavOpen() && sx < 22 && dx > 70) setNav(true);
+      else if (isNavOpen() && dx < -70) setNav(false);
+    }
+    sx = null;
+  }, { passive: true });
+})();
+
+function updateMobileTitle(btn) {
+  const el = document.getElementById('mobileTitle');
+  if (el && btn) el.textContent = btn.textContent.replace(/^\s*\d+\s*·\s*/, '').trim();
+}
 
 function scoreChipClass(rec) {
   return { STRONG_MATCH: 'strong', POSSIBLE_MATCH: 'possible', WEAK_MATCH: 'weak', NOT_MATCH: 'none' }[rec] || 'none';
@@ -261,6 +350,10 @@ document.getElementById('nav').addEventListener('click', (e) => {
   if (!btn) return;
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  updateMobileTitle(btn);
+  setNav(false);
+  closeAllModals();
+  window.scrollTo(0, 0);
   routes[btn.dataset.page]();
   refreshBackupBanner();
 });
@@ -721,11 +814,108 @@ function renderBatchResult(summary) {
 // ------------------------------------------------------------------
 // 03. SCREENING CENTER
 // ------------------------------------------------------------------
+const CRITERIA_LABELS = { education: 'Pendidikan', experience: 'Pengalaman', technical_skills: 'Keahlian Teknis', soft_skills: 'Soft Skill', leadership: 'Kepemimpinan', certification: 'Sertifikasi' };
+const STATUS_LABEL = { MET: 'Terpenuhi', PARTIAL: 'Sebagian', NOT_MET: 'Tidak Terpenuhi', NA: 'Tidak Disyaratkan', MANUAL: 'Tinjau Manual' };
+const countLineHtml = (counts) => `<span class="count-line"><span class="m">${counts.met} terpenuhi</span> · <span class="p">${counts.partial} sebagian</span> · <span class="n">${counts.not_met} tidak</span>${counts.na ? ` · <span class="muted">${counts.na} n/a</span>` : ''}</span>`;
+
+/** Requirement-vs-CV comparison — used in the Screening Center inline detail AND the Review modal. */
+function comparisonTableHtml(cmp) {
+  const itemChips = (items, manual) => (items || []).map(it => `<span class="item-chip ${manual ? 'manual' : (it.met ? 'met' : 'miss')}">${esc(it.label)}</span>`).join('') || '<span class="muted">-</span>';
+  return `
+    ${cmp.requirement_outdated ? '<div class="info-banner warn"><strong>Job Requirement sudah diubah</strong> sejak screening ini dijalankan — angka di bawah memakai kriteria SAAT screening dilakukan. Hitung ulang untuk memakai kriteria terbaru.</div>' : ''}
+    <div class="cmp-summary">${countLineHtml(cmp.counts)}</div>
+    <div class="table-wrap"><table class="cmp-table">
+      <thead><tr><th>Kriteria</th><th>Requirement</th><th>CV Kandidat</th><th>Skor</th><th>Status</th></tr></thead>
+      <tbody>
+        ${cmp.rows.map(r => `
+          <tr>
+            <td data-label="Kriteria"><div class="cmp-crit">${esc(r.label)}</div>${r.weight_pct !== null ? `<div class="cmp-weight">bobot ${r.weight_pct}%</div>` : ''}</td>
+            <td data-label="Requirement"><div class="cmp-main">${esc(r.requirement)}</div>${r.requirement_items ? `<div class="cmp-items">${itemChips(r.requirement_items, r.manual)}</div>` : ''}</td>
+            <td data-label="CV Kandidat"><div class="cmp-main">${esc(r.cv)}</div>${r.cv_notes && r.cv_notes.length ? `<div class="cmp-note">${r.cv_notes.map(esc).join(' · ')}</div>` : ''}${r.cv_items && r.key === 'certification' ? `<div class="cmp-items">${r.cv_items.map(x => `<span class="item-chip met">${esc(x)}</span>`).join('') || ''}</div>` : ''}</td>
+            <td data-label="Skor">${r.score !== null ? `<div class="cmp-score"><div class="criteria-track"><div class="criteria-fill ${r.status}" style="width:${r.score}%"></div></div><span>${r.score}</span></div>` : '<span class="muted">-</span>'}</td>
+            <td data-label="Status"><span class="pill ${r.status}">${esc(STATUS_LABEL[r.status] || r.status)}</span></td>
+          </tr>`).join('')}
+      </tbody>
+    </table></div>
+    ${r_note(cmp)}`;
+}
+function r_note(cmp) { return cmp.source === 'current' ? '<p class="field-hint" style="margin-top:8px">Screening ini dibuat sebelum pencatatan snapshot — perbandingan memakai data Job Requirement &amp; CV saat ini.</p>' : ''; }
+
+// ------------------------------------------------------------------
+// CV viewer — used from Screening Center, Candidate 360, CV Bank
+// ------------------------------------------------------------------
+async function openCvViewer(cvId, { push = false } = {}) {
+  openModal(`
+    <div class="page-eyebrow">Dokumen CV</div>
+    <div class="page-title" style="font-size:18px" id="cvViewerTitle">Memuat...</div>
+    <div id="cvViewerBody" style="margin-top:10px">Memuat dokumen...</div>
+  `, { wide: true, push });
+  let meta;
+  try { meta = await api(`/api/cv/${cvId}/text`); } catch (e) { document.getElementById('cvViewerBody').innerHTML = `<div class="empty-state">Gagal memuat CV: ${esc(e.message)}</div>`; return; }
+  document.getElementById('cvViewerTitle').textContent = `${meta.candidate_name || 'Kandidat'} — ${meta.filename}`;
+  document.getElementById('cvViewerBody').innerHTML = `
+    <p class="page-desc" style="margin:0 0 10px">Diunggah ${new Date(meta.uploaded_at).toLocaleString('id-ID')} · Sumber: ${esc(meta.source || '-')}</p>
+    <div class="cv-toolbar">
+      <button class="btn btn-secondary btn-sm" onclick="downloadFile('/api/cv/${cvId}/download', '${escAttr(meta.filename)}')">⬇ Unduh Asli</button>
+    </div>
+    <div id="cvViewerContent" class="cv-view">Memuat pratinjau...</div>`;
+  const target = document.getElementById('cvViewerContent');
+  if (meta.file_type === 'application/pdf' && meta.has_file) {
+    try {
+      const file = await svc.apiFile(`/api/cv/${cvId}/download`);
+      const buf = await file.blob.arrayBuffer();
+      const vendor = await import('./vendor.js');
+      const pdfjs = await vendor.getPdfJs();
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, useSystemFonts: false, disableFontFace: true }).promise;
+      target.innerHTML = '';
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        const viewport = page.getViewport({ scale: 1.25 });
+        const canvas = document.createElement('canvas');
+        canvas.className = 'cv-page';
+        canvas.width = viewport.width; canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        target.appendChild(canvas);
+        page.cleanup();
+      }
+      await doc.destroy();
+    } catch (e) {
+      target.innerHTML = `<pre class="cv-text">${esc(meta.raw_text || 'Pratinjau tidak tersedia.')}</pre><p class="field-hint">Gagal merender pratinjau PDF (${esc(e.message)}) — menampilkan teks hasil ekstraksi.</p>`;
+    }
+  } else {
+    target.innerHTML = `<pre class="cv-text">${esc(meta.raw_text || 'Teks CV tidak tersedia.')}</pre>`;
+  }
+}
+function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
+
+/** Opens the CV viewer for a candidate: straight to the file if there's only one, otherwise a small picker first. */
+async function openCandidateCv(candidateId, { push = false } = {}) {
+  let data;
+  try { data = await api(`/api/candidates/${candidateId}/cv-list`); } catch (e) { toast('Gagal memuat CV: ' + e.message, true); return; }
+  if (!data.cvs.length) { toast('Kandidat ini belum memiliki file CV tersimpan.', true); return; }
+  if (data.cvs.length === 1) { openCvViewer(data.cvs[0].id, { push }); return; }
+  openModal(`
+    <div class="page-eyebrow">Dokumen CV</div>
+    <div class="page-title" style="font-size:18px">${displayName(data.candidate.name)} <span class="page-desc" style="font-weight:400">(${data.cvs.length} file)</span></div>
+    <div style="margin-top:10px">${data.cvs.map(cv => `
+      <div class="list-item-chip clickable" data-cv="${cv.id}">
+        <span>${esc(cv.filename)} <span class="page-desc">· ${new Date(cv.uploaded_at).toLocaleDateString('id-ID')} · ${esc(cv.source || '-')}</span></span>
+        <span class="muted">Lihat →</span>
+      </div>`).join('')}</div>
+  `, { push });
+  document.querySelectorAll('#modal .list-item-chip[data-cv]').forEach(el => el.addEventListener('click', () => openCvViewer(Number(el.dataset.cv), { push: true })));
+}
+
+// ------------------------------------------------------------------
+// 03. SCREENING CENTER
+// ------------------------------------------------------------------
+let screeningComparisonCache = {};
+
 async function renderScreening() {
   content.innerHTML = `<div class="page-header">
       <div class="page-eyebrow">Modul 03</div>
       <div class="page-title">Screening Center</div>
-      <div class="page-desc">Halaman operasional utama HR: jalankan AI matching terhadap lowongan, lalu tinjau dan putuskan.</div>
+      <div class="page-desc">Halaman operasional utama HR: jalankan AI matching terhadap lowongan, lalu tinjau detail kecocokan per kriteria — bukan hanya skor — dan putuskan.</div>
     </div>
     <div id="screeningBody">Memuat...</div>`;
 
@@ -755,7 +945,8 @@ async function renderScreening() {
 
 async function loadScreeningTable(vacancyId) {
   const wrap = document.getElementById('screeningTableWrap');
-  const data = await api(`/api/screening-center/${vacancyId}`);
+  screeningComparisonCache = {};
+  const data = await api(`/api/screening-center/${vacancyId}/full`);
   if (!data.candidates.length) {
     wrap.innerHTML = `<div class="empty-state"><div class="empty-state-icon">·</div>Belum ada kandidat yang di-screening untuk lowongan ini. Klik "Screen Semua Kandidat CV Bank".</div>`;
     return;
@@ -766,65 +957,53 @@ async function loadScreeningTable(vacancyId) {
       ${kpiCard('High Match', data.summary.high_match)}
       ${kpiCard('Perlu Review', data.summary.review)}
     </div>
+    ${data.vacancy.outdated_count ? `<div class="info-banner warn"><strong>${data.vacancy.outdated_count} screening</strong> memakai kriteria Job Requirement yang sudah berubah. <button class="btn btn-secondary btn-xs" onclick="rescreenVacancy(${vacancyId})">Hitung Ulang Semua</button></div>` : ''}
     <div class="card table-wrap">
-      <table>
-        <thead><tr><th></th><th>Rank</th><th>Kandidat</th><th>Match Score</th><th>Rekomendasi AI</th><th>Status HR</th><th></th></tr></thead>
+      <table class="screening-table">
+        <thead><tr><th></th><th>Rank</th><th>Kandidat</th><th>Match Score</th><th>Kriteria</th><th>Status HR</th><th></th></tr></thead>
         <tbody>
           ${data.candidates.map(c => `
-            <tr class="clickable-row" onclick="toggleScreeningDetail(${c.screening_id})">
+            <tr class="clickable-row" data-screening-row="${c.screening_id}">
               <td><span id="chevron_${c.screening_id}" class="expand-chevron">▸</span></td>
               <td>${c.rank}</td>
-              <td>${displayName(c.candidate_name)}</td>
-              <td><span class="score-chip ${scoreChipClass(c.recommendation)}">${c.match_score}</span></td>
-              <td>${recLabel(c.recommendation)}</td>
+              <td class="wrap name-cell">
+                <strong>${displayName(c.candidate_name)}</strong>
+                ${c.cv_count ? `<button type="button" class="btn-link" data-view-cv="${c.candidate_id}" onclick="event.stopPropagation()">Lihat CV (${c.cv_count})</button>` : '<span class="page-desc">Tidak ada file CV</span>'}
+              </td>
+              <td><span class="score-chip ${scoreChipClass(c.recommendation)}">${c.match_score}</span>${c.requirement_outdated ? ' <span class="ai-tag" title="Requirement sudah berubah">usang</span>' : ''}</td>
+              <td class="wrap"><div class="pill-row">${Object.entries(c.criteria_status || {}).map(([k, v]) => `<span class="pill ${v}" title="${esc(CRITERIA_LABELS[k] || k)}">${esc((CRITERIA_LABELS[k] || k).split(' ')[0])}</span>`).join('')}</div></td>
               <td><span class="badge ${c.hr_status}">${c.hr_status.replace('_', ' ')}</span></td>
-              <td><button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openScreeningModal(${c.screening_id})">Review</button></td>
+              <td class="row-actions"><button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openScreeningModal(${c.screening_id})">Review</button></td>
             </tr>
             <tr id="detail_${c.screening_id}" class="screening-detail-row" style="display:none">
-              <td colspan="7">${renderScreeningDetailInline(c)}</td>
+              <td colspan="7"><div id="detailBody_${c.screening_id}"><p class="page-desc">Memuat detail kecocokan...</p></div></td>
             </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
+  wrap.querySelectorAll('[data-screening-row]').forEach(row => row.addEventListener('click', () => toggleScreeningDetail(Number(row.dataset.screeningRow))));
+  wrap.querySelectorAll('[data-view-cv]').forEach(btn => btn.addEventListener('click', () => openCandidateCv(Number(btn.dataset.viewCv), { push: true })));
 }
 
-const CRITERIA_LABELS = { education: 'Pendidikan', experience: 'Pengalaman', technical_skills: 'Keahlian Teknis', soft_skills: 'Soft Skill', leadership: 'Kepemimpinan', certification: 'Sertifikasi' };
-
-function renderScreeningDetailInline(c) {
-  return `
-    <div class="screening-detail-inline">
-      <div class="section-title" style="font-size:13px">Skor per Kriteria <span class="ai-tag">AI · confidence ${c.confidence}</span></div>
-      ${Object.entries(c.criteria_scores).map(([k, v]) => `
-        <div class="criteria-row">
-          <div class="criteria-name">${CRITERIA_LABELS[k] || k}</div>
-          <div class="criteria-track"><div class="criteria-fill" style="width:${v}%"></div></div>
-          <div class="criteria-score">${v}</div>
-        </div>`).join('') || '<p class="page-desc">Tidak ada rincian skor.</p>'}
-
-      <div class="grid grid-2" style="margin-top:10px">
-        <div>
-          <div class="section-title" style="font-size:13px">Matched Criteria</div>
-          <div class="tag-list">${(c.matched_criteria.length ? c.matched_criteria : ['-']).map(m => `<span class="tag matched">${esc(m)}</span>`).join('')}</div>
-        </div>
-        <div>
-          <div class="section-title" style="font-size:13px">Missing Criteria</div>
-          <div class="tag-list">${(c.missing_criteria.length ? c.missing_criteria : ['Tidak ada']).map(m => `<span class="tag missing">${esc(m)}</span>`).join('')}</div>
-        </div>
-      </div>
-
-      <div class="section-title" style="font-size:13px; margin-top:10px">AI Summary</div>
-      <p class="page-desc">${esc(c.summary || '-')}</p>
-      <div class="section-title" style="font-size:13px">Gap Analysis</div>
-      <p class="page-desc">${esc(c.gap_analysis || '-')}</p>
-    </div>`;
-}
-
-function toggleScreeningDetail(screeningId) {
+async function toggleScreeningDetail(screeningId) {
   const row = document.getElementById(`detail_${screeningId}`);
   const chevron = document.getElementById(`chevron_${screeningId}`);
   const isOpen = row.style.display !== 'none';
   row.style.display = isOpen ? 'none' : 'table-row';
   chevron.textContent = isOpen ? '▸' : '▾';
+  if (isOpen) return;
+  const body = document.getElementById(`detailBody_${screeningId}`);
+  try {
+    if (!screeningComparisonCache[screeningId]) screeningComparisonCache[screeningId] = await api(`/api/screening/${screeningId}/full`);
+    const full = screeningComparisonCache[screeningId];
+    body.innerHTML = `
+      <div class="section-title" style="font-size:13px">Detail Kecocokan Requirement vs CV <span class="ai-tag">AI · confidence ${full.confidence}</span></div>
+      ${comparisonTableHtml(full.comparison)}
+      <div class="detail-grid">
+        <div><div class="section-title" style="font-size:13px">AI Summary</div><p class="page-desc">${esc(full.summary || '-')}</p></div>
+        <div><div class="section-title" style="font-size:13px">Gap Analysis</div><p class="page-desc">${esc(full.gap_analysis || '-')}</p></div>
+      </div>`;
+  } catch (e) { body.innerHTML = `<div class="empty-state">Gagal memuat detail: ${esc(e.message)}</div>`; }
 }
 
 async function runAllScreenings(vacancyId) {
@@ -850,31 +1029,22 @@ async function runAllScreenings(vacancyId) {
 }
 
 async function openScreeningModal(screeningId) {
-  const s = await api(`/api/screening/${screeningId}`);
-  const criteriaLabels = { education: 'Pendidikan', experience: 'Pengalaman', technical_skills: 'Keahlian Teknis', soft_skills: 'Soft Skill', leadership: 'Kepemimpinan', certification: 'Sertifikasi' };
-
+  const s = await api(`/api/screening/${screeningId}/full`);
   openModal(`
     <div class="page-eyebrow">Detail Screening</div>
     <div class="page-title" style="font-size:19px">${esc(s.candidate.name)} → ${esc(s.vacancy_position)}</div>
-    <div style="margin:10px 0"><span class="score-chip ${scoreChipClass(s.recommendation)}">${s.overall_score}</span> <span class="ai-tag">AI · confidence ${s.confidence}</span></div>
+    <div style="margin:10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+      <span class="score-chip ${scoreChipClass(s.recommendation)}">${s.overall_score}</span> <span class="ai-tag">AI · confidence ${s.confidence}</span>
+      ${s.cvs.length ? `<button type="button" class="btn btn-secondary btn-xs" onclick="openCandidateCv(${s.candidate.id}, {push:true})">📄 Lihat CV${s.cvs.length > 1 ? ` (${s.cvs.length})` : ''}</button>` : ''}
+    </div>
 
-    <div class="section-title" style="margin-top:16px">Skor per Kriteria</div>
-    ${Object.entries(s.criteria_scores).map(([k, v]) => `
-      <div class="criteria-row">
-        <div class="criteria-name">${criteriaLabels[k] || k}</div>
-        <div class="criteria-track"><div class="criteria-fill" style="width:${v}%"></div></div>
-        <div class="criteria-score">${v}</div>
-      </div>`).join('')}
+    <div class="section-title" style="margin-top:12px">Detail Kecocokan Requirement vs CV</div>
+    ${comparisonTableHtml(s.comparison)}
 
-    <div class="section-title">Matched Criteria</div>
-    <div class="tag-list">${(s.matched_criteria.length ? s.matched_criteria : ['-']).map(m => `<span class="tag matched">${esc(m)}</span>`).join('')}</div>
-
-    <div class="section-title" style="margin-top:14px">Missing Criteria</div>
-    <div class="tag-list">${(s.missing_criteria.length ? s.missing_criteria : ['Tidak ada']).map(m => `<span class="tag missing">${esc(m)}</span>`).join('')}</div>
-
-    <div class="section-title" style="margin-top:14px">AI Summary &amp; Gap Analysis</div>
-    <p class="page-desc">${esc(s.summary)}</p>
-    <p class="page-desc">${esc(s.gap_analysis)}</p>
+    <div class="detail-grid">
+      <div><div class="section-title" style="font-size:13px">AI Summary</div><p class="page-desc">${esc(s.summary)}</p></div>
+      <div><div class="section-title" style="font-size:13px">Gap Analysis</div><p class="page-desc">${esc(s.gap_analysis)}</p></div>
+    </div>
 
     <div class="subtle-divider"></div>
     <div class="section-title">Keputusan HR <span class="hr-tag">Human Decision</span></div>
@@ -886,13 +1056,13 @@ async function openScreeningModal(screeningId) {
       <div class="field"><label>Catatan (opsional)</label><textarea id="hrRemarks">${s.hr_decision ? esc(s.hr_decision.remarks || '') : ''}</textarea></div>
       <div class="field"><label>Reviewer</label><div class="reviewer-readonly">🔒 ${esc(currentUser.full_name)}</div></div>
     </div>
-        <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap">
+    <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap">
       <button class="btn btn-primary btn-sm" onclick="submitDecision(${s.id}, 'PASS')">Pass</button>
       <button class="btn btn-violet btn-sm" onclick="submitDecision(${s.id}, 'TALENT_POOL')">Talent Pool</button>
       <button class="btn btn-warn btn-sm" onclick="submitDecision(${s.id}, 'HOLD')">Hold</button>
       <button class="btn btn-danger btn-sm" onclick="submitDecision(${s.id}, 'REJECT')">Reject</button>
     </div>
-  `);
+  `, { wide: true, push: true });
 }
 
 async function submitDecision(screeningId, decision) {
@@ -925,13 +1095,14 @@ async function renderBank() {
       <input id="searchMinExp" type="number" placeholder="Min. pengalaman (thn)" style="width:170px" />
       <select id="searchEdu">
         <option value="">Semua Pendidikan</option>
-        <option>SMA/SMK</option><option>D3</option><option>S1</option><option>S2</option><option>S3</option>
       </select>
       <button class="btn btn-secondary btn-sm" id="searchBtn">Cari</button>
       <button class="btn btn-secondary btn-sm" onclick="downloadFile('/api/export/candidates.xlsx', 'CV_Bank.xlsx')">⬇ Export Excel</button>
     </div>
     <div id="bankTableWrap">Memuat...</div>`;
 
+  const opts = await getMasterOptions();
+  document.getElementById('searchEdu').insertAdjacentHTML('beforeend', (opts['education-levels'] || []).map(o => `<option>${esc(o.name)}</option>`).join(''));
   document.getElementById('searchBtn').addEventListener('click', loadBank);
   loadBank();
 }
@@ -940,7 +1111,7 @@ async function loadBank() {
   const q = document.getElementById('searchQ').value.trim();
   const minExp = document.getElementById('searchMinExp').value;
   const edu = document.getElementById('searchEdu').value;
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ include: 'extras' });
   if (q) params.set('q', q);
   if (minExp) params.set('min_experience', minExp);
   if (edu) params.set('education', edu);
@@ -952,20 +1123,25 @@ async function loadBank() {
   }
   wrap.innerHTML = `<div class="card table-wrap">
     <table>
-      <thead><tr><th>Nama</th><th>Pendidikan</th><th>Pengalaman</th><th>Sumber</th><th>Keahlian</th><th></th></tr></thead>
+      <thead><tr><th>Nama</th><th>Pendidikan</th><th>Pengalaman</th><th>Sumber</th><th>Keahlian</th><th>Dokumen CV</th><th>Hasil Screening</th><th></th></tr></thead>
       <tbody>
         ${candidates.map(c => `
-          <tr class="clickable-row" onclick="openCandidateModal(${c.id})">
+          <tr class="clickable-row" data-candidate="${c.id}">
             <td><strong>${displayName(c.name)}</strong><br><span class="page-desc">${esc(c.email || '-')}</span></td>
             <td>${esc(c.highest_education || '-')}</td>
             <td>${c.total_experience_years || 0} thn</td>
             <td>${esc(c.source || '-')}</td>
             <td><div class="tag-list">${(c.skills.slice(0, 3)).map(s => `<span class="tag">${esc(s)}</span>`).join('')}${c.skills.length > 3 ? `<span class="tag">+${c.skills.length - 3}</span>` : ''}</div></td>
+            <td>${c.cv_count ? `<button type="button" class="btn btn-secondary btn-xs" data-view-cv="${c.id}">📄 Lihat (${c.cv_count})</button>` : '<span class="muted">-</span>'}</td>
+            <td>${c.screenings.length ? c.screenings.slice(0, 2).map(s => `<span class="screening-chip" data-view-screening="${s.id}">${esc(s.vacancy_position || '-')} <span class="score-chip ${scoreChipClass(s.recommendation)}">${s.overall_score}</span></span>`).join('') + (c.screenings.length > 2 ? `<span class="page-desc">+${c.screenings.length - 2} lagi</span>` : '') : '<span class="muted">Belum discreening</span>'}</td>
             <td><button class="btn btn-secondary btn-sm">Detail</button></td>
           </tr>`).join('')}
       </tbody>
     </table>
   </div>`;
+  wrap.querySelectorAll('[data-candidate]').forEach(row => row.addEventListener('click', () => openCandidateModal(Number(row.dataset.candidate))));
+  wrap.querySelectorAll('[data-view-cv]').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); openCandidateCv(Number(btn.dataset.viewCv), { push: true }); }));
+  wrap.querySelectorAll('[data-view-screening]').forEach(el => el.addEventListener('click', (e) => { e.stopPropagation(); openScreeningModal(Number(el.dataset.viewScreening)); }));
 }
 
 async function openCandidateModal(candidateId) {
@@ -984,7 +1160,10 @@ async function openCandidateModal(candidateId) {
     ${data.cvs.length ? data.cvs.map(cv => `
       <div class="list-item-chip">
         <span>${esc(cv.filename)} <span class="page-desc">· diunggah ${new Date(cv.uploaded_at).toLocaleDateString('id-ID')} · ${esc(cv.source || '-')}</span></span>
-        <button class="btn btn-secondary btn-xs" onclick="downloadFile('/api/cv/${cv.id}/download', 'CV')">⬇ Unduh</button>
+        <span class="row-actions">
+          <button class="btn btn-secondary btn-xs" data-view-cv="${cv.id}">📄 Lihat</button>
+          <button class="btn btn-secondary btn-xs" onclick="downloadFile('/api/cv/${cv.id}/download', '${escAttr(cv.filename)}')">⬇ Unduh</button>
+        </span>
       </div>`).join('') : '<div class="page-desc">Tidak ada file tersimpan.</div>'}
 
     ${hasHiredStage ? `
@@ -1005,7 +1184,7 @@ async function openCandidateModal(candidateId) {
 
     <div class="section-title" style="margin-top:16px">Riwayat Screening <span class="ai-tag">${data.screening_history.length} transaksi</span></div>
     ${data.screening_history.length ? data.screening_history.map(s => `
-      <div class="list-item-chip">
+      <div class="list-item-chip clickable" data-view-screening="${s.id}">
         <span>${esc(s.vacancy_position)} <span class="page-desc">· ${new Date(s.processed_at).toLocaleDateString('id-ID')}</span></span>
         <span><span class="score-chip ${scoreChipClass(s.recommendation)}">${s.overall_score}</span> ${s.hr_decision ? `<span class="badge ${s.hr_decision.decision}">${s.hr_decision.decision}</span>` : '<span class="badge PENDING_REVIEW">PENDING</span>'}</span>
       </div>`).join('') : '<div class="page-desc">Belum pernah di-screening.</div>'}
@@ -1052,6 +1231,8 @@ async function openCandidateModal(candidateId) {
     <div class="tag-list">${p.skills.map(s => `<span class="tag matched">${esc(s)}</span>`).join('') || '<span class="page-desc">-</span>'}</div>
     <div class="tag-list" style="margin-top:6px">${p.certifications.map(s => `<span class="tag">${esc(s)}</span>`).join('') || ''}</div>
   `);
+  document.querySelectorAll('#modal [data-view-cv]').forEach(btn => btn.addEventListener('click', () => openCvViewer(Number(btn.dataset.viewCv), { push: true })));
+  document.querySelectorAll('#modal [data-view-screening]').forEach(el => el.addEventListener('click', () => openScreeningModal(Number(el.dataset.viewScreening))));
 }
 
 async function refreshStageQuestionBank() {
@@ -1197,16 +1378,201 @@ async function reactivateCandidate(candidateId) {
 }
 
 // ------------------------------------------------------------------
+// Knowledge Center master-data cache + reusable pickers (used by Job
+// Requirement, Knowledge Center templates, and CV Intake).
+// ------------------------------------------------------------------
+let masterOptionsCache = null;
+async function getMasterOptions(force = false) {
+  if (masterOptionsCache && !force) return masterOptionsCache;
+  masterOptionsCache = await api('/api/knowledge/master/options');
+  return masterOptionsCache;
+}
+function invalidateMasterOptions() { masterOptionsCache = null; }
+
+function fillDatalist(listId, items) {
+  const dl = document.getElementById(listId);
+  if (dl) dl.innerHTML = (items || []).map(o => `<option value="${esc(o.name)}"></option>`).join('');
+}
+
+/** Text input with browser-native autocomplete from a Knowledge Center category — still free text. */
+function pickerField(id, label, category, placeholder = '') {
+  return `<div class="field"><label>${esc(label)}</label>
+    <input id="${id}" list="${id}_dl" placeholder="${esc(placeholder)}" autocomplete="off" data-picker-category="${category}" />
+    <datalist id="${id}_dl"></datalist></div>`;
+}
+function fillPickerFields(root, opts) {
+  root.querySelectorAll('[data-picker-category]').forEach(inp => fillDatalist(`${inp.id}_dl`, opts[inp.dataset.pickerCategory] || []));
+}
+
+/** <select> of education levels, sourced from the Knowledge Center (built-ins + any custom level added). */
+function educationSelectHtml(id, label, selected = '') {
+  return `<div class="field"><label>${esc(label)}</label><select id="${id}" data-edu-select></select></div>`;
+}
+function fillEducationSelects(root, opts, includeBlank = false) {
+  const items = opts['education-levels'] || [];
+  root.querySelectorAll('[data-edu-select]').forEach(sel => {
+    const current = sel.value;
+    sel.innerHTML = (includeBlank ? '<option value="">— Tidak ada syarat —</option>' : '') + items.map(o => `<option value="${esc(o.name)}">${esc(o.name)}</option>`).join('');
+    if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+    else if (!includeBlank && items.length) sel.value = items[Math.min(2, items.length - 1)].name; // default ~S1
+  });
+}
+
+/**
+ * Chip-style multi-value picker backed by a Knowledge Center category. Values not yet in the Knowledge Center
+ * ("new") are accepted too — saving the record adds them automatically (svc_recruitment.js / svc_knowledge.js).
+ */
+function renderChipPicker(containerId, category, initialItems = []) {
+  window[`__chip_${containerId}`] = { items: [...initialItems], category };
+  paintChipPicker(containerId);
+}
+function paintChipPicker(containerId, filterText = '', focusInput = false) {
+  const state = window[`__chip_${containerId}`];
+  const container = document.getElementById(containerId);
+  if (!container || !state) return;
+  const opts = (masterOptionsCache && masterOptionsCache[state.category]) || [];
+  const selectedLower = new Set(state.items.map(x => x.toLowerCase()));
+  const ft = filterText.trim().toLowerCase();
+  const suggestions = opts.filter(o => !selectedLower.has(o.name.toLowerCase()) && (!ft || o.name.toLowerCase().includes(ft))).slice(0, 24);
+  container.innerHTML = `
+    <div class="chip-picker">
+      <div class="chip-selected">${state.items.map((it, i) => `
+        <span class="chip-sel${opts.some(o => o.name.toLowerCase() === it.toLowerCase()) ? '' : ' new'}">${esc(it)}<button type="button" class="chip-remove" data-idx="${i}" aria-label="Hapus ${esc(it)}">&times;</button></span>`).join('')}</div>
+      <input class="chip-input" placeholder="Ketik untuk cari atau tambah baru, lalu Enter…" autocomplete="off" />
+      <div class="chip-options">${suggestions.length ? suggestions.map(o => `<span class="chip-opt" data-name="${esc(o.name)}">+ ${esc(o.name)}</span>`).join('') : (ft ? `<span class="chip-opt" data-name="${esc(filterText.trim())}">+ Tambah baru: "${esc(filterText.trim())}"</span>` : '<span class="chip-hint">Tidak ada saran lain — ketik untuk menambah nilai baru.</span>')}</div>
+    </div>`;
+  const input = container.querySelector('.chip-input');
+  input.value = filterText;
+  if (focusInput) { input.focus(); input.setSelectionRange(filterText.length, filterText.length); }
+  input.addEventListener('input', () => paintChipPicker(containerId, input.value, true));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) addChipItem(containerId, v); }
+  });
+  container.querySelectorAll('.chip-remove').forEach(btn => btn.addEventListener('click', () => removeChipItem(containerId, Number(btn.dataset.idx))));
+  container.querySelectorAll('.chip-opt').forEach(btn => btn.addEventListener('click', () => addChipItem(containerId, btn.dataset.name)));
+}
+function addChipItem(containerId, value) {
+  const state = window[`__chip_${containerId}`];
+  value = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!state || !value || state.items.some(x => x.toLowerCase() === value.toLowerCase())) { paintChipPicker(containerId, '', true); return; }
+  state.items.push(value);
+  paintChipPicker(containerId, '', true);
+}
+function removeChipItem(containerId, idx) {
+  window[`__chip_${containerId}`].items.splice(idx, 1);
+  paintChipPicker(containerId, '', true);
+}
+function getChipItems(containerId) {
+  const state = window[`__chip_${containerId}`];
+  return state ? [...state.items] : [];
+}
+
+// ------------------------------------------------------------------
 // 06. JOB REQUIREMENT
 // ------------------------------------------------------------------
+const VACANCY_STATUS_LABEL = { OPEN: 'Terbuka', ON_HOLD: 'Ditahan', CLOSED: 'Ditutup' };
+let vacancySearchQ = '', vacancyStatusFilter = '';
+let knowledgeTemplatesCache = [];
+
+function vacancyFormFieldsHtml(p) {
+  return `
+    <div class="form-grid single">
+      ${pickerField(`${p}Position`, 'Posisi', 'positions', 'mis. Production Supervisor')}
+      ${pickerField(`${p}Dept`, 'Departemen', 'departments', 'mis. Manufacturing')}
+      ${pickerField(`${p}Level`, 'Job Level', 'job-levels', 'mis. Supervisor')}
+      ${pickerField(`${p}Location`, 'Lokasi', 'locations', 'mis. Tangerang')}
+      ${educationSelectHtml(`${p}Edu`, 'Pendidikan Minimum')}
+      <div class="field"><label>Pengalaman Minimum (tahun)</label><input id="${p}Exp" type="number" min="0" step="0.5" value="2" /></div>
+      <div class="field"><label>Keahlian Teknis</label><div id="${p}TechSkills"></div></div>
+      <div class="field"><label>Soft Skill</label><div id="${p}SoftSkills"></div></div>
+      <div class="field"><label>Sertifikasi Wajib</label><div id="${p}Certs"></div></div>
+      <div class="field"><label><input type="checkbox" id="${p}Leadership" style="width:auto"/> Membutuhkan pengalaman kepemimpinan</label></div>
+      <div class="field">
+        <label>Kriteria/Requirement Tambahan
+          <button type="button" class="btn btn-ghost btn-xs" style="margin-left:6px" onclick="openUniversityPickerForVacancy('${p}')">🎓 Tambah dari Daftar Universitas</button>
+        </label>
+        <p class="page-desc" style="margin:2px 0 6px">Untuk kriteria yang belum ada di kolom manapun di atas — mis. usia, domisili, SIM, status pernikahan, dll. Dicatat sebagai catatan untuk ditinjau HR/Recruiter secara manual, <strong>tidak dinilai otomatis oleh AI</strong>. Untuk kriteria berbasis atribut yang dilindungi hukum (agama, ras, suku, dsb.), pastikan sesuai UU Ketenagakerjaan Pasal 5-6 — hanya dipakai bila memang ada dasar kualifikasi pekerjaan yang sah.</p>
+        <div id="${p}MandatoryEditor"></div>
+      </div>
+      <div class="field"><label>Status</label><select id="${p}Status">${VACANCY_STATUSES_UI.map(s => `<option value="${s}">${esc(VACANCY_STATUS_LABEL[s])}</option>`).join('')}</select></div>
+      <div class="field"><label>Passing Score</label><input id="${p}PassScore" type="number" value="75" /></div>
+      <div class="field"><label>Minimum Score</label><input id="${p}MinScore" type="number" value="60" /></div>
+    </div>`;
+}
+const VACANCY_STATUSES_UI = ['OPEN', 'ON_HOLD', 'CLOSED'];
+
+async function initVacancyForm(p, opts) {
+  fillPickerFields(document, opts);
+  fillEducationSelects(document, opts);
+  renderChipPicker(`${p}TechSkills`, 'hard-skills', []);
+  renderChipPicker(`${p}SoftSkills`, 'soft-skills', []);
+  renderChipPicker(`${p}Certs`, 'certifications', []);
+  renderCriteriaListEditor(`${p}MandatoryEditor`, []);
+}
+
+function fillVacancyForm(p, v) {
+  document.getElementById(`${p}Position`).value = v.position || '';
+  document.getElementById(`${p}Dept`).value = v.department || '';
+  document.getElementById(`${p}Level`).value = v.job_level || '';
+  document.getElementById(`${p}Location`).value = v.location || '';
+  document.getElementById(`${p}Edu`).value = v.min_education || '';
+  document.getElementById(`${p}Exp`).value = v.min_experience_years ?? 0;
+  document.getElementById(`${p}Leadership`).checked = !!v.leadership_required;
+  document.getElementById(`${p}Status`).value = v.status || 'OPEN';
+  document.getElementById(`${p}PassScore`).value = v.passing_score ?? 75;
+  document.getElementById(`${p}MinScore`).value = v.minimum_score ?? 60;
+  renderChipPicker(`${p}TechSkills`, 'hard-skills', v.technical_skills || []);
+  renderChipPicker(`${p}SoftSkills`, 'soft-skills', v.soft_skills || []);
+  renderChipPicker(`${p}Certs`, 'certifications', v.certifications_required || []);
+  renderCriteriaListEditor(`${p}MandatoryEditor`, v.mandatory_criteria || []);
+}
+
+function collectVacancyForm(p) {
+  return {
+    position: document.getElementById(`${p}Position`).value.trim(),
+    department: document.getElementById(`${p}Dept`).value.trim(),
+    job_level: document.getElementById(`${p}Level`).value.trim(),
+    location: document.getElementById(`${p}Location`).value.trim(),
+    min_education: document.getElementById(`${p}Edu`).value || null,
+    min_experience_years: Number(document.getElementById(`${p}Exp`).value || 0),
+    technical_skills: getChipItems(`${p}TechSkills`),
+    soft_skills: getChipItems(`${p}SoftSkills`),
+    certifications_required: getChipItems(`${p}Certs`),
+    leadership_required: document.getElementById(`${p}Leadership`).checked,
+    mandatory_criteria: getCriteriaListValues(`${p}MandatoryEditor`),
+    status: document.getElementById(`${p}Status`).value,
+    passing_score: Number(document.getElementById(`${p}PassScore`).value || 75),
+    minimum_score: Number(document.getElementById(`${p}MinScore`).value || 60),
+  };
+}
+
 async function renderVacancies() {
   content.innerHTML = `<div class="page-header">
       <div class="page-eyebrow">Modul 06</div>
       <div class="page-title">Job Requirement Engine</div>
-      <div class="page-desc">Setiap lowongan memiliki profil kriteria terstruktur dan bobot yang bisa dikonfigurasi — dasar bagi AI matching.</div>
+      <div class="page-desc">Setiap lowongan memiliki profil kriteria terstruktur dan bobot yang bisa dikonfigurasi — dasar bagi AI matching. Nilai posisi, departemen, skill, dst. diambil dari <a class="link" onclick="openPage('knowledge')">Knowledge Center</a>; ketik nilai baru bila belum ada, otomatis ditambahkan saat disimpan.</div>
     </div>
+    <details class="import-box">
+      <summary>⬆ Import Job Requirement dari Excel</summary>
+      <p class="page-desc" style="margin-top:8px">Untuk membuat banyak lowongan sekaligus dari file eksternal, dengan form standar yang siap diisi.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="downloadFile('/api/vacancies/import-template.xlsx', 'MRI_JobRequirement_Import_Template.xlsx')">⬇ Download Template</button>
+        <input type="file" id="vacImportFile" accept=".xlsx" style="display:none" />
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('vacImportFile').click()">⬆ Upload &amp; Import Excel</button>
+      </div>
+      <div id="vacImportResult" style="margin-top:10px"></div>
+    </details>
     <div class="two-col">
-      <div id="vacancyList">Memuat daftar lowongan...</div>
+      <div>
+        <div class="toolbar">
+          <input class="grow" id="vacSearchQ" placeholder="Cari posisi/departemen..." value="${esc(vacancySearchQ)}" />
+          <select id="vacStatusFilter">
+            <option value="">Semua Status</option>
+            ${VACANCY_STATUSES_UI.map(s => `<option value="${s}" ${vacancyStatusFilter === s ? 'selected' : ''}>${esc(VACANCY_STATUS_LABEL[s])}</option>`).join('')}
+          </select>
+        </div>
+        <div id="vacancyList">Memuat daftar lowongan...</div>
+      </div>
       <div class="card">
         <div class="section-title">Buat Job Requirement Baru</div>
         <div class="field">
@@ -1215,73 +1581,68 @@ async function renderVacancies() {
             <option value="">— Mulai dari kosong —</option>
           </select>
         </div>
-        <div class="form-grid single">
-          <div class="field"><label>Posisi</label><input id="vPosition" placeholder="mis. Production Supervisor" /></div>
-          <div class="field"><label>Departemen</label><input id="vDept" placeholder="mis. Manufacturing" /></div>
-          <div class="field"><label>Level</label><input id="vLevel" placeholder="mis. Staff / Supervisor / Manager" /></div>
-          <div class="field"><label>Lokasi</label><input id="vLocation" placeholder="mis. Tangerang" /></div>
-          <div class="field"><label>Pendidikan Minimum</label>
-            <select id="vEdu"><option>SMA/SMK</option><option>D3</option><option selected>S1</option><option>S2</option><option>S3</option></select>
-          </div>
-          <div class="field"><label>Pengalaman Minimum (tahun)</label><input id="vExp" type="number" value="2" /></div>
-          <div class="field"><label>Keahlian Teknis (pisahkan koma)</label><input id="vTechSkills" placeholder="mis. Six Sigma, SAP, Production Planning" /></div>
-          <div class="field"><label>Soft Skill (pisahkan koma)</label><input id="vSoftSkills" placeholder="mis. Leadership, Communication" /></div>
-          <div class="field"><label>Sertifikasi Wajib (pisahkan koma)</label><input id="vCerts" placeholder="mis. Six Sigma Green Belt" /></div>
-          <div class="field"><label><input type="checkbox" id="vLeadership" style="width:auto"/> Membutuhkan pengalaman kepemimpinan</label></div>
-          <div class="field">
-            <label>Kriteria/Requirement Tambahan
-              <button type="button" class="btn btn-ghost btn-xs" style="margin-left:6px" onclick="openUniversityPickerForVacancy()">🎓 Tambah dari Daftar Universitas</button>
-            </label>
-            <p class="page-desc" style="margin:2px 0 6px">Untuk kriteria yang belum ada di kolom manapun di atas — mis. usia, domisili, SIM, status pernikahan, dll. Dicatat sebagai catatan untuk ditinjau HR/Recruiter secara manual, <strong>tidak dinilai otomatis oleh AI</strong>. Untuk kriteria berbasis atribut yang dilindungi hukum (agama, ras, suku, dsb.), pastikan sesuai UU Ketenagakerjaan Pasal 5-6 — hanya dipakai bila memang ada dasar kualifikasi pekerjaan yang sah.</p>
-            <div id="vMandatoryEditor"></div>
-          </div>
-          <div class="field"><label>Passing Score</label><input id="vPassScore" type="number" value="75" /></div>
-          <div class="field"><label>Minimum Score</label><input id="vMinScore" type="number" value="60" /></div>
-        </div>
+        ${vacancyFormFieldsHtml('v')}
         <button class="btn btn-primary btn-sm" style="margin-top:14px" onclick="createVacancy()">Simpan Job Requirement</button>
       </div>
     </div>`;
+
+  document.getElementById('vacImportFile').addEventListener('change', (e) => { if (e.target.files[0]) handleVacancyImport(e.target.files[0]); });
+  document.getElementById('vacSearchQ').addEventListener('input', debounce(() => { vacancySearchQ = document.getElementById('vacSearchQ').value; loadVacancyList(); }, 250));
+  document.getElementById('vacStatusFilter').addEventListener('change', () => { vacancyStatusFilter = document.getElementById('vacStatusFilter').value; loadVacancyList(); });
+
+  const opts = await getMasterOptions();
+  await initVacancyForm('v', opts);
   loadVacancyList();
   loadKnowledgeTemplatesForVacancy();
-  renderCriteriaListEditor('vMandatoryEditor', []);
 }
 
-let knowledgeTemplatesCache = [];
-let selectedKnowledgeTemplateId = null;
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+async function handleVacancyImport(file) {
+  const box = document.getElementById('vacImportResult');
+  box.innerHTML = `<div class="page-desc">Memproses file Excel...</div>`;
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const res = await api('/api/vacancies/import', { method: 'POST', body: fd });
+    box.innerHTML = `
+      <div class="card" style="background:var(--surface-raised)">
+        <div class="grid grid-4" style="margin:6px 0">
+          ${kpiCard('Total Baris', res.total_rows)}${kpiCard('Berhasil', res.valid)}${kpiCard('Duplicate', res.duplicate)}${kpiCard('Invalid', res.invalid)}
+        </div>
+        ${res.master_added_count ? `<p class="page-desc">${res.master_added_count} nilai baru (posisi/departemen/skill/dll.) otomatis ditambahkan ke Knowledge Center.</p>` : ''}
+        ${res.errors.length ? `<div class="table-wrap"><table><thead><tr><th>Baris</th><th>Status</th><th>Keterangan</th></tr></thead><tbody>
+          ${res.errors.map(e => `<tr><td>${e.row}</td><td><span class="badge ${e.status === 'DUPLICATE' ? 'TALENT_POOL' : 'REJECT'}">${e.status}</span></td><td class="page-desc">${esc(e.reason)}</td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="page-desc">Semua baris berhasil diimport tanpa error.</p>'}
+      </div>`;
+    toast(`Import selesai: ${res.imported_count} Job Requirement baru ditambahkan.`);
+    invalidateMasterOptions();
+    loadVacancyList();
+  } catch (e) {
+    box.innerHTML = `<div class="empty-state">Gagal import: ${esc(e.message)}</div>`;
+  }
+}
 
 async function loadKnowledgeTemplatesForVacancy() {
   try {
     knowledgeTemplatesCache = await api('/api/knowledge/job-criteria');
     const sel = document.getElementById('vTemplatePicker');
-    if (sel) {
-      sel.innerHTML = '<option value="">— Mulai dari kosong —</option>' +
-        knowledgeTemplatesCache.map(t => `<option value="${t.id}">${esc(t.title)} (dipakai ${t.times_used}x)</option>`).join('');
-    }
+    if (sel) sel.innerHTML = '<option value="">— Mulai dari kosong —</option>' +
+      knowledgeTemplatesCache.map(t => `<option value="${t.id}">${esc(t.title)} (dipakai ${t.times_used}x)</option>`).join('');
   } catch (e) { /* non-fatal */ }
 }
 
+let selectedKnowledgeTemplateId = null;
 function applyKnowledgeTemplate() {
   const id = Number(document.getElementById('vTemplatePicker').value);
   selectedKnowledgeTemplateId = id || null;
   if (!id) return;
   const t = knowledgeTemplatesCache.find(x => x.id === id);
   if (!t) return;
-  document.getElementById('vPosition').value = t.position || '';
-  document.getElementById('vDept').value = t.department || '';
-  document.getElementById('vLevel').value = t.job_level || '';
-  document.getElementById('vEdu').value = t.min_education || 'S1';
-  document.getElementById('vExp').value = t.min_experience_years || 0;
-  document.getElementById('vTechSkills').value = (t.technical_skills || []).join(', ');
-  document.getElementById('vSoftSkills').value = (t.soft_skills || []).join(', ');
-  document.getElementById('vCerts').value = (t.certifications_required || []).join(', ');
-  document.getElementById('vLeadership').checked = !!t.leadership_required;
-  renderCriteriaListEditor('vMandatoryEditor', t.mandatory_criteria || []);
-  document.getElementById('vPassScore').value = t.passing_score || 75;
-  document.getElementById('vMinScore').value = t.minimum_score || 60;
+  fillVacancyForm('v', { ...t, status: 'OPEN' });
   toast(`Form diisi dari template "${t.title}". Sesuaikan bila perlu, lalu simpan.`);
 }
 
-async function openUniversityPickerForVacancy() {
+async function openUniversityPickerForVacancy(targetPrefix) {
   let unis = [];
   try { unis = await api('/api/knowledge/universities'); } catch (e) { toast('Gagal memuat daftar universitas.', true); return; }
   openModal(`
@@ -1297,58 +1658,157 @@ async function openUniversityPickerForVacancy() {
           </div>
         </label>`).join('') || '<p class="page-desc">Belum ada data di Knowledge Center.</p>'}
     </div>
-    <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="applyPickedUniversities()">Tambahkan ke Kriteria Wajib</button>
-  `);
+    <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="applyPickedUniversities('${targetPrefix}')">Tambahkan ke Kriteria Wajib</button>
+  `, { push: true });
 }
-
-function applyPickedUniversities() {
+function applyPickedUniversities(targetPrefix) {
   const checked = Array.from(document.querySelectorAll('#uniPickList input[type=checkbox]:checked'));
-  const state = window['__criteria_vMandatoryEditor'];
+  const state = window[`__criteria_${targetPrefix}MandatoryEditor`];
   checked.forEach(cb => state.items.push(cb.dataset.text));
   state.paint();
   toast(`${checked.length} kriteria universitas ditambahkan.`);
   closeModal();
 }
 
-async function loadVacancyList() {
-  const vacancies = await api('/api/vacancies');
-  document.getElementById('vacancyList').innerHTML = vacancies.length ? vacancies.map(v => `
-    <div class="card">
-      <div class="section-title">${esc(v.position)} <span class="badge ${v.status === 'OPEN' ? 'PASS' : 'HOLD'}">${v.status}</span></div>
+function vacancyCardHtml(v) {
+  const skills = (v.technical_skills || []).slice(0, 6);
+  return `
+    <div class="card vac-card">
+      <div class="section-title">${esc(v.position)} <span class="badge ${v.status}">${esc(VACANCY_STATUS_LABEL[v.status] || v.status)}</span>${v.is_demo ? '<span class="ai-tag" style="text-transform:none">demo</span>' : ''}</div>
       <p class="page-desc">${esc(v.department || '-')} · ${esc(v.job_level || '-')} · ${esc(v.location || '-')}</p>
-      <p class="page-desc">Min. pendidikan: ${esc(v.min_education || '-')} · Min. pengalaman: ${v.min_experience_years} thn · Passing score: ${v.passing_score}</p>
-      <div class="tag-list">${(v.technical_skills || []).map(s => `<span class="tag">${esc(s)}</span>`).join('')}</div>
-    </div>`).join('') : `<div class="empty-state"><div class="empty-state-icon">·</div>Belum ada Job Requirement.</div>`;
+      <p class="page-desc">Min. pendidikan: ${esc(v.min_education || '-')} · Min. pengalaman: ${v.min_experience_years} thn · Passing score: ${v.passing_score}${v.screening_count !== undefined ? ` · ${v.screening_count} kandidat discreening` : ''}</p>
+      <div class="tag-list">${skills.map(s => `<span class="tag">${esc(s)}</span>`).join('')}${(v.technical_skills || []).length > 6 ? `<span class="tag">+${v.technical_skills.length - 6}</span>` : ''}</div>
+      <div class="vac-foot">
+        <div class="row-actions">
+          <button class="btn btn-secondary btn-sm" onclick="openVacancyReview(${v.id})">Review</button>
+          <button class="btn btn-secondary btn-sm" onclick="openVacancyEdit(${v.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDeleteVacancy(${v.id})">Hapus</button>
+        </div>
+        <button class="btn btn-ghost btn-xs" onclick="openPage('screening')">→ Screening Center</button>
+      </div>
+    </div>`;
+}
+
+async function loadVacancyList() {
+  const listEl = document.getElementById('vacancyList');
+  let vacancies = await api('/api/vacancies?include=stats');
+  if (vacancyStatusFilter) vacancies = vacancies.filter(v => v.status === vacancyStatusFilter);
+  if (vacancySearchQ.trim()) {
+    const q = vacancySearchQ.trim().toLowerCase();
+    vacancies = vacancies.filter(v => (v.position || '').toLowerCase().includes(q) || (v.department || '').toLowerCase().includes(q));
+  }
+  listEl.innerHTML = vacancies.length ? vacancies.map(vacancyCardHtml).join('') : `<div class="empty-state"><div class="empty-state-icon">·</div>${vacancySearchQ || vacancyStatusFilter ? 'Tidak ada Job Requirement yang cocok dengan filter.' : 'Belum ada Job Requirement.'}</div>`;
 }
 
 async function createVacancy() {
-  const payload = {
-    position: document.getElementById('vPosition').value.trim(),
-    department: document.getElementById('vDept').value.trim(),
-    job_level: document.getElementById('vLevel').value.trim(),
-    location: document.getElementById('vLocation').value.trim(),
-    min_education: document.getElementById('vEdu').value,
-    min_experience_years: Number(document.getElementById('vExp').value || 0),
-    technical_skills: document.getElementById('vTechSkills').value.split(',').map(s => s.trim()).filter(Boolean),
-    soft_skills: document.getElementById('vSoftSkills').value.split(',').map(s => s.trim()).filter(Boolean),
-    certifications_required: document.getElementById('vCerts').value.split(',').map(s => s.trim()).filter(Boolean),
-    leadership_required: document.getElementById('vLeadership').checked,
-    mandatory_criteria: getCriteriaListValues('vMandatoryEditor'),
-    passing_score: Number(document.getElementById('vPassScore').value || 75),
-    minimum_score: Number(document.getElementById('vMinScore').value || 60),
-  };
+  const payload = collectVacancyForm('v');
   if (!payload.position) { toast('Nama posisi wajib diisi.', true); return; }
   try {
     const qs = selectedKnowledgeTemplateId ? `?from_knowledge_id=${selectedKnowledgeTemplateId}` : '';
     await api(`/api/vacancies${qs}`, { method: 'POST', body: JSON.stringify(payload) });
     toast('Job Requirement tersimpan.');
-    document.getElementById('vPosition').value = '';
+    invalidateMasterOptions();
     selectedKnowledgeTemplateId = null;
-    renderCriteriaListEditor('vMandatoryEditor', []);
+    document.getElementById('vTemplatePicker').value = '';
+    fillVacancyForm('v', { status: 'OPEN' });
+    await initVacancyForm('v', await getMasterOptions(true));
     loadVacancyList();
   } catch (e) {
     toast('Gagal menyimpan: ' + e.message, true);
   }
+}
+
+async function openVacancyReview(id) {
+  const v = await api(`/api/vacancies/${id}/detail`);
+  const weightEntries = Object.entries(v.criteria_weights || {});
+  openModal(`
+    <div class="page-eyebrow">Review Job Requirement</div>
+    <div class="page-title" style="font-size:19px">${esc(v.position)} <span class="badge ${v.status}">${esc(VACANCY_STATUS_LABEL[v.status] || v.status)}</span></div>
+    <dl class="kv" style="margin-top:12px">
+      <dt>Departemen</dt><dd>${esc(v.department || '-')}</dd>
+      <dt>Job Level</dt><dd>${esc(v.job_level || '-')}</dd>
+      <dt>Lokasi</dt><dd>${esc(v.location || '-')}</dd>
+      <dt>Pendidikan Minimum</dt><dd>${esc(v.min_education || 'Tidak disyaratkan')}</dd>
+      <dt>Pengalaman Minimum</dt><dd>${v.min_experience_years} tahun</dd>
+      <dt>Keahlian Teknis</dt><dd>${(v.technical_skills || []).length ? (v.technical_skills || []).map(esc).join(', ') : '-'}</dd>
+      <dt>Soft Skill</dt><dd>${(v.soft_skills || []).length ? (v.soft_skills || []).map(esc).join(', ') : '-'}</dd>
+      <dt>Sertifikasi Wajib</dt><dd>${(v.certifications_required || []).length ? (v.certifications_required || []).map(esc).join(', ') : '-'}</dd>
+      <dt>Kepemimpinan</dt><dd>${v.leadership_required ? 'Wajib' : 'Tidak disyaratkan'}</dd>
+      <dt>Kriteria Tambahan</dt><dd>${(v.mandatory_criteria || []).length ? (v.mandatory_criteria || []).map(esc).join('; ') : '-'}</dd>
+      <dt>Passing / Minimum Score</dt><dd>${v.passing_score} / ${v.minimum_score}</dd>
+      ${weightEntries.length ? `<dt>Bobot Kriteria</dt><dd>${weightEntries.map(([k, w]) => `${esc(k)}: ${Math.round(w * 100)}%`).join(', ')}</dd>` : ''}
+      <dt>Dibuat</dt><dd>${new Date(v.created_at).toLocaleString('id-ID')}</dd>
+    </dl>
+    <div class="subtle-divider"></div>
+    <div class="section-title" style="font-size:14px">Penggunaan</div>
+    <p class="page-desc">${v.usage.screenings} hasil screening · ${v.usage.stages} catatan tahapan · ${v.usage.talent_pool} entri talent pool · ${v.usage.employees} karyawan bersumber dari lowongan ini.</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary btn-sm" onclick="closeModal(); openVacancyEdit(${v.id})">Edit</button>
+      <button class="btn btn-primary btn-sm" onclick="closeModal(); openPage('screening')">Buka di Screening Center</button>
+      ${v.usage.screenings ? `<button class="btn btn-violet btn-sm" onclick="rescreenVacancy(${v.id})">Hitung Ulang Screening</button>` : ''}
+    </div>
+  `, { push: true });
+}
+
+async function rescreenVacancy(id) {
+  try {
+    const r = await api(`/api/vacancies/${id}/rescreen`, { method: 'POST' });
+    toast(`${r.rescreened} screening dihitung ulang (${r.changed} skor berubah).`);
+    closeModal();
+  } catch (e) { toast('Gagal menghitung ulang: ' + e.message, true); }
+}
+
+async function openVacancyEdit(id) {
+  const v = await api(`/api/vacancies/${id}/detail`);
+  openModal(`
+    <div class="page-eyebrow">Edit Job Requirement</div>
+    <div class="page-title" style="font-size:18px">${esc(v.position)}</div>
+    ${v.usage.screenings ? `<div class="info-banner warn"><strong>Perhatian:</strong> lowongan ini sudah punya ${v.usage.screenings} hasil screening. Mengubah kriteria/bobot tidak otomatis menghitung ulang skor lama — gunakan "Hitung Ulang Screening" setelah menyimpan bila perlu.</div>` : ''}
+    ${vacancyFormFieldsHtml('ev')}
+    <div class="modal-actions">
+      <button class="btn btn-primary btn-sm" onclick="saveVacancyEdit(${v.id})">Simpan Perubahan</button>
+      ${v.usage.screenings ? `<button class="btn btn-violet btn-sm" onclick="rescreenVacancy(${v.id})">Hitung Ulang Screening</button>` : ''}
+    </div>
+  `, { wide: true, push: true });
+  const opts = await getMasterOptions();
+  await initVacancyForm('ev', opts);
+  fillVacancyForm('ev', v);
+}
+
+async function saveVacancyEdit(id) {
+  const payload = collectVacancyForm('ev');
+  if (!payload.position) { toast('Nama posisi wajib diisi.', true); return; }
+  try {
+    const res = await api(`/api/vacancies/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    toast(res.scoring_changed ? `Tersimpan. ${res.screenings_affected} screening yang sudah ada memakai kriteria lama sampai dihitung ulang.` : 'Job Requirement diperbarui.');
+    invalidateMasterOptions();
+    closeModal();
+    loadVacancyList();
+  } catch (e) { toast('Gagal menyimpan: ' + e.message, true); }
+}
+
+async function confirmDeleteVacancy(id) {
+  let dep;
+  try { dep = await api(`/api/vacancies/${id}/dependents`); } catch (e) { toast('Gagal memuat data: ' + e.message, true); return; }
+  const inUse = dep.screenings || dep.stages;
+  openModal(`
+    <div class="page-eyebrow">Konfirmasi</div>
+    <div class="page-title" style="font-size:18px">Hapus Job Requirement?</div>
+    <p class="page-desc" style="margin-top:8px">Anda akan menghapus <strong>${esc(dep.position)}</strong>.</p>
+    ${inUse ? `<div class="info-banner danger"><strong>Lowongan ini sudah dipakai:</strong> ${dep.screenings} hasil screening dan ${dep.stages} catatan tahapan rekrutmen akan ikut terhapus. ${dep.talent_pool ? `${dep.talent_pool} entri Talent Pool` : ''}${dep.talent_pool && dep.employees ? ' dan ' : ''}${dep.employees ? `${dep.employees} data Employee` : ''}${dep.talent_pool || dep.employees ? ' tetap ada, hanya tautan ke lowongan ini yang dilepas.' : ''} Tindakan ini tidak bisa dibatalkan.</div>` : '<p class="page-desc">Lowongan ini belum dipakai untuk screening atau tahapan apa pun.</p>'}
+    <div class="modal-actions">
+      <button class="btn btn-danger btn-sm" onclick="doDeleteVacancy(${id}, ${inUse ? 1 : 0})">Ya, Hapus</button>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal()">Batal</button>
+    </div>
+  `, { push: true });
+}
+async function doDeleteVacancy(id, cascade) {
+  try {
+    await api(`/api/vacancies/${id}${cascade ? '?cascade=1' : ''}`, { method: 'DELETE' });
+    toast('Job Requirement dihapus.');
+    closeModal();
+    loadVacancyList();
+  } catch (e) { toast('Gagal menghapus: ' + e.message, true); }
 }
 
 // ------------------------------------------------------------------
@@ -1625,51 +2085,104 @@ async function doDeleteEmployee(employeeId) {
 }
 
 // ------------------------------------------------------------------
-// 08. KNOWLEDGE CENTER (V1.3)
+// 08. KNOWLEDGE CENTER (V1.3 tabs + V2.1 master data)
 // ------------------------------------------------------------------
+// The three original tabs (Kriteria Jabatan, Universitas, Bank Pertanyaan) are their own workflows with extra
+// fields (weights, GPA, stage/competency) and stay as-is. Everything else that Job Requirement and CV Intake
+// pick from — position, department, job level, location, education level, GPA standard, certification,
+// hard/soft skill, CV source — is master data (js/svc_master.js) and shares one generic tab renderer below.
+const KC_SPECIAL_TABS = [
+  { slug: 'criteria', label: 'Kriteria Jabatan', group: 'tpl' },
+  { slug: 'university', label: 'Universitas & IPK Minimum', group: 'tpl' },
+  { slug: 'question', label: 'Bank Pertanyaan Interview', group: 'tpl' },
+];
 let knowledgeTab = 'criteria';
+let knowledgeCategoriesCache = null;
 
 async function renderKnowledge() {
   content.innerHTML = `<div class="page-header">
       <div class="page-eyebrow">Modul 08</div>
       <div class="page-title">Knowledge Center</div>
-      <div class="page-desc">Library kriteria jabatan, daftar universitas &amp; IPK minimum, dan bank pertanyaan interview — dibuat sekali, dipakai berulang lintas lowongan.</div>
+      <div class="page-desc">Referensi tunggal untuk semua aktivitas: master data (posisi, departemen, job level, pendidikan, universitas, sertifikasi, skill, dll.) serta template siap pakai (kriteria jabatan, bank pertanyaan). Nilai di sini muncul sebagai pilihan di Job Requirement dan CV Intake — beda dengan Job Requirement, yang berisi satu lowongan konkret.</div>
     </div>
-    <div class="tab-bar">
-      <button class="tab-btn ${knowledgeTab === 'criteria' ? 'active' : ''}" onclick="switchKnowledgeTab('criteria')">Kriteria Jabatan</button>
-      <button class="tab-btn ${knowledgeTab === 'university' ? 'active' : ''}" onclick="switchKnowledgeTab('university')">Universitas &amp; IPK Minimum</button>
-      <button class="tab-btn ${knowledgeTab === 'question' ? 'active' : ''}" onclick="switchKnowledgeTab('question')">Bank Pertanyaan Interview</button>
-    </div>
+    <div id="kcNav" class="kc-nav">Memuat kategori...</div>
     <div id="knowledgeBody">Memuat...</div>`;
+  knowledgeCategoriesCache = await api('/api/knowledge/master/categories');
+  renderKnowledgeNav();
   loadKnowledgeTab();
 }
 
-function switchKnowledgeTab(tab) { knowledgeTab = tab; renderKnowledge(); }
+function renderKnowledgeNav() {
+  const nav = document.getElementById('kcNav');
+  if (!nav) return;
+  const byGroup = {};
+  for (const c of knowledgeCategoriesCache) (byGroup[c.group] = byGroup[c.group] || []).push(c);
+  const chip = (slug, label, count) => `<button type="button" class="kc-btn ${knowledgeTab === slug ? 'active' : ''}" data-tab="${slug}">${esc(label)}${count !== undefined ? ` <span class="n">${count}</span>` : ''}</button>`;
+  nav.innerHTML = `
+    <div class="kc-group"><span class="kc-group-label">Template</span>${KC_SPECIAL_TABS.map(t => chip(t.slug, t.label)).join('')}</div>
+    ${Object.entries(byGroup).map(([g, cats]) => `<div class="kc-group"><span class="kc-group-label">${esc(MASTER_GROUP_LABELS[g] || g)}</span>${cats.map(c => chip(c.slug, c.label, c.count_active)).join('')}</div>`).join('')}
+  `;
+  nav.querySelectorAll('.kc-btn').forEach(btn => btn.addEventListener('click', () => switchKnowledgeTab(btn.dataset.tab)));
+}
+const MASTER_GROUP_LABELS = { org: 'Organisasi & Jabatan', qual: 'Kualifikasi Kandidat', proc: 'Proses Rekrutmen' };
+
+function switchKnowledgeTab(tab) { knowledgeTab = tab; renderKnowledgeNav(); loadKnowledgeTab(); }
 
 async function loadKnowledgeTab() {
   const body = document.getElementById('knowledgeBody');
   if (knowledgeTab === 'criteria') return loadKnowledgeCriteriaTab(body);
   if (knowledgeTab === 'university') return loadKnowledgeUniversityTab(body);
-  return loadKnowledgeQuestionTab(body);
+  if (knowledgeTab === 'question') return loadKnowledgeQuestionTab(body);
+  return loadMasterCategoryTab(body, knowledgeTab);
 }
 
+// legacy per-type import card (job-criteria / universities / interview-questions — svc_knowledge.js endpoints)
+function importCard(typeSlug, label) {
+  return `
+    <details class="import-box">
+      <summary>⬆ Import ${esc(label)} dari Excel</summary>
+      <p class="page-desc" style="margin-top:8px">Untuk menambahkan banyak data sekaligus dari file eksternal.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="downloadFile('/api/knowledge/${typeSlug}/import-template.xlsx', 'MRI_${typeSlug}_Template.xlsx')">⬇ Download Template</button>
+        <input type="file" id="import_${typeSlug}_file" accept=".xlsx" style="display:none" />
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('import_${typeSlug}_file').click()">⬆ Upload &amp; Import Excel</button>
+      </div>
+      <div id="import_${typeSlug}_result" style="margin-top:10px"></div>
+    </details>`;
+}
+function wireImportCard(typeSlug) {
+  const fileInput = document.getElementById(`import_${typeSlug}_file`);
+  if (fileInput) fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleKnowledgeImport(typeSlug, e.target.files[0]); });
+}
+async function handleKnowledgeImport(typeSlug, file) {
+  const resultBox = document.getElementById(`import_${typeSlug}_result`);
+  resultBox.innerHTML = `<div class="page-desc">Memproses file Excel...</div>`;
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const res = await api(`/api/knowledge/${typeSlug}/import`, { method: 'POST', body: fd });
+    resultBox.innerHTML = importResultHtml(res);
+    toast(`Import selesai: ${res.imported_count} data baru ditambahkan.`);
+    loadKnowledgeTab();
+  } catch (e) { resultBox.innerHTML = `<div class="empty-state">Gagal import: ${esc(e.message)}</div>`; }
+}
+
+// -------------------------------------------------------- Kriteria Jabatan
 async function loadKnowledgeCriteriaTab(body) {
-  const items = await api('/api/knowledge/job-criteria');
+  const items = await api('/api/knowledge/job-criteria?active_only=false');
+  const opts = await getMasterOptions();
   body.innerHTML = `
-        <div class="card" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:14px">
       <div class="section-title">Tambah Template Kriteria Jabatan</div>
       <div class="form-grid single">
         <div class="field"><label>Judul Template</label><input id="kcTitle" placeholder="mis. Production Supervisor - Standard" /></div>
-        <div class="field"><label>Posisi</label><input id="kcPosition" placeholder="mis. Production Supervisor" /></div>
-        <div class="field"><label>Departemen</label><input id="kcDept" placeholder="mis. Manufacturing" /></div>
-        <div class="field"><label>Level</label><input id="kcLevel" placeholder="mis. Supervisor" /></div>
-        <div class="field"><label>Pendidikan Minimum</label>
-          <select id="kcEdu"><option>SMA/SMK</option><option>D3</option><option selected>S1</option><option>S2</option><option>S3</option></select>
-        </div>
+        ${pickerField('kcPosition', 'Posisi', 'positions', 'mis. Production Supervisor')}
+        ${pickerField('kcDept', 'Departemen', 'departments', 'mis. Manufacturing')}
+        ${pickerField('kcLevel', 'Level', 'job-levels', 'mis. Supervisor')}
+        ${educationSelectHtml('kcEdu', 'Pendidikan Minimum')}
         <div class="field"><label>Pengalaman Minimum (tahun)</label><input id="kcExp" type="number" value="2" /></div>
-        <div class="field"><label>Keahlian Teknis (pisahkan koma)</label><input id="kcTech" placeholder="mis. Six Sigma, Production Planning" /></div>
-        <div class="field"><label>Soft Skill (pisahkan koma)</label><input id="kcSoft" placeholder="mis. Leadership, Communication" /></div>
-        <div class="field"><label>Sertifikasi (pisahkan koma)</label><input id="kcCert" placeholder="mis. Six Sigma Green Belt" /></div>
+        <div class="field"><label>Keahlian Teknis</label><div id="kcTech"></div></div>
+        <div class="field"><label>Soft Skill</label><div id="kcSoft"></div></div>
+        <div class="field"><label>Sertifikasi</label><div id="kcCert"></div></div>
         <div class="field">
           <label>Kriteria/Requirement Tambahan</label>
           <p class="page-desc" style="margin:2px 0 6px">Untuk kriteria yang belum ada di kolom manapun di atas — mis. usia, domisili, SIM, dll. Bersifat catatan untuk ditinjau manual, tidak dinilai otomatis oleh AI. Hati-hati dengan kriteria berbasis atribut yang dilindungi hukum (agama, ras, dsb.) — lihat UU Ketenagakerjaan Pasal 5-6.</p>
@@ -1684,64 +2197,20 @@ async function loadKnowledgeCriteriaTab(body) {
     ${importCard('job-criteria', 'Template Kriteria Jabatan')}
     <div class="grid grid-2">
       ${items.length ? items.map(t => `
-        <div class="card">
-          <div class="section-title">${esc(t.title)} <span class="ai-tag">dipakai ${t.times_used}x</span></div>
+        <div class="card ${t.active ? '' : 'inactive'}">
+          <div class="section-title">${esc(t.title)} <span class="ai-tag">dipakai ${t.times_used}x</span>${!t.active ? ' <span class="badge INACTIVE">nonaktif</span>' : ''}</div>
           <p class="page-desc">${esc(t.position)} · ${esc(t.department || '-')} · ${esc(t.job_level || '-')}</p>
           <p class="page-desc">Min. pendidikan: ${esc(t.min_education || '-')} · Min. pengalaman: ${t.min_experience_years} thn</p>
           <div class="tag-list">${(t.technical_skills || []).map(s => `<span class="tag">${esc(s)}</span>`).join('')}</div>
           ${(t.mandatory_criteria || []).length ? `<div class="tag-list" style="margin-top:6px">${t.mandatory_criteria.map(c => `<span class="tag" style="background:var(--surface-raised)">${esc(c)}</span>`).join('')}</div>` : ''}
-          <button class="btn btn-danger btn-xs" style="margin-top:10px" onclick="deactivateKnowledgeCriteria(${t.id})">Nonaktifkan</button>
+          ${t.active ? `<button class="btn btn-danger btn-xs" style="margin-top:10px" onclick="deactivateKnowledgeCriteria(${t.id})">Nonaktifkan</button>`
+                      : `<button class="btn btn-secondary btn-xs" style="margin-top:10px" onclick="activateKnowledgeCriteria(${t.id})">Aktifkan</button>`}
         </div>`).join('') : '<div class="empty-state"><div class="empty-state-icon">·</div>Belum ada template kriteria jabatan.</div>'}
     </div>`;
+  fillPickerFields(document, opts); fillEducationSelects(document, opts);
+  renderChipPicker('kcTech', 'hard-skills', []); renderChipPicker('kcSoft', 'soft-skills', []); renderChipPicker('kcCert', 'certifications', []);
   renderCriteriaListEditor('kcMandatoryEditor', []);
   wireImportCard('job-criteria');
-}
-
-function importCard(typeSlug, label) {
-  return `
-    <div class="card" style="margin-bottom:14px">
-      <div class="section-title">Import ${esc(label)} dari Excel</div>
-      <p class="page-desc">Untuk menambahkan banyak data sekaligus dari file eksternal.</p>
-      <div style="display:flex; gap:8px; flex-wrap:wrap">
-        <button class="btn btn-secondary btn-sm" onclick="downloadFile('/api/knowledge/${typeSlug}/import-template.xlsx', 'MRI_${typeSlug}_Template.xlsx')">⬇ Download Template</button>
-        <input type="file" id="import_${typeSlug}_file" accept=".xlsx" style="display:none" />
-        <button class="btn btn-primary btn-sm" onclick="document.getElementById('import_${typeSlug}_file').click()">⬆ Upload &amp; Import Excel</button>
-      </div>
-      <div id="import_${typeSlug}_result" style="margin-top:10px"></div>
-    </div>`;
-}
-
-function wireImportCard(typeSlug) {
-  const fileInput = document.getElementById(`import_${typeSlug}_file`);
-  if (fileInput) fileInput.addEventListener('change', (e) => {
-    if (e.target.files[0]) handleKnowledgeImport(typeSlug, e.target.files[0]);
-  });
-}
-
-async function handleKnowledgeImport(typeSlug, file) {
-  const resultBox = document.getElementById(`import_${typeSlug}_result`);
-  resultBox.innerHTML = `<div class="page-desc">Memproses file Excel...</div>`;
-  const fd = new FormData();
-  fd.append('file', file);
-  try {
-    const res = await api(`/api/knowledge/${typeSlug}/import`, { method: 'POST', body: fd });
-    resultBox.innerHTML = `
-      <div class="card" style="background:var(--surface-raised)">
-        <div class="grid grid-4" style="margin:6px 0">
-          ${kpiCard('Total Baris', res.total_rows)}
-          ${kpiCard('Valid', res.valid)}
-          ${kpiCard('Duplicate', res.duplicate)}
-          ${kpiCard('Invalid', res.invalid)}
-        </div>
-        ${res.errors.length ? `<div class="table-wrap"><table><thead><tr><th>Baris</th><th>Status</th><th>Keterangan</th></tr></thead><tbody>
-          ${res.errors.map(e => `<tr><td>${e.row}</td><td><span class="badge ${e.status === 'DUPLICATE' ? 'TALENT_POOL' : 'REJECT'}">${e.status}</span></td><td class="page-desc">${esc(e.reason)}</td></tr>`).join('')}
-        </tbody></table></div>` : '<p class="page-desc">Semua baris berhasil diimport tanpa error.</p>'}
-      </div>`;
-    toast(`Import selesai: ${res.imported_count} data baru ditambahkan.`);
-    renderKnowledge();
-  } catch (e) {
-    resultBox.innerHTML = `<div class="empty-state">Gagal import: ${esc(e.message)}</div>`;
-  }
 }
 
 async function createKnowledgeCriteria() {
@@ -1752,9 +2221,9 @@ async function createKnowledgeCriteria() {
     job_level: document.getElementById('kcLevel').value.trim(),
     min_education: document.getElementById('kcEdu').value,
     min_experience_years: Number(document.getElementById('kcExp').value || 0),
-    technical_skills: document.getElementById('kcTech').value.split(',').map(s => s.trim()).filter(Boolean),
-    soft_skills: document.getElementById('kcSoft').value.split(',').map(s => s.trim()).filter(Boolean),
-    certifications_required: document.getElementById('kcCert').value.split(',').map(s => s.trim()).filter(Boolean),
+    technical_skills: getChipItems('kcTech'),
+    soft_skills: getChipItems('kcSoft'),
+    certifications_required: getChipItems('kcCert'),
     mandatory_criteria: getCriteriaListValues('kcMandatoryEditor'),
     passing_score: Number(document.getElementById('kcPass').value || 75),
     minimum_score: Number(document.getElementById('kcMin').value || 60),
@@ -1764,26 +2233,25 @@ async function createKnowledgeCriteria() {
   try {
     await api('/api/knowledge/job-criteria', { method: 'POST', body: JSON.stringify(payload) });
     toast('Template kriteria jabatan tersimpan.');
+    invalidateMasterOptions();
+    renderKnowledgeNav();
     renderKnowledge();
-  } catch (e) {
-    toast('Gagal menyimpan: ' + e.message, true);
-  }
+  } catch (e) { toast('Gagal menyimpan: ' + e.message, true); }
 }
-
 async function deactivateKnowledgeCriteria(id) {
-  try {
-    await api(`/api/knowledge/job-criteria/${id}`, { method: 'DELETE' });
-    toast('Template dinonaktifkan.');
-    renderKnowledge();
-  } catch (e) {
-    toast('Gagal: ' + e.message, true);
-  }
+  try { await api(`/api/knowledge/job-criteria/${id}`, { method: 'DELETE' }); toast('Template dinonaktifkan.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal: ' + e.message, true); }
+}
+async function activateKnowledgeCriteria(id) {
+  try { await api(`/api/knowledge/job-criteria/${id}/activate`, { method: 'POST' }); toast('Template diaktifkan kembali.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal: ' + e.message, true); }
 }
 
+// -------------------------------------------------- Universitas & IPK
 async function loadKnowledgeUniversityTab(body) {
-  const items = await api('/api/knowledge/universities');
+  const items = await api('/api/knowledge/universities?active_only=false');
   body.innerHTML = `
-        <div class="card" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:14px">
       <div class="section-title">Tambah Universitas</div>
       <div class="form-grid single">
         <div class="field"><label>Nama Universitas</label><input id="uniName" placeholder="mis. Universitas Indonesia" /></div>
@@ -1799,16 +2267,16 @@ async function loadKnowledgeUniversityTab(body) {
       <thead><tr><th>Nama Universitas</th><th>Tier</th><th>Akreditasi</th><th>IPK Min.</th><th>Lokasi</th><th></th></tr></thead>
       <tbody>
         ${items.length ? items.map(u => `
-          <tr>
-            <td>${esc(u.name)}</td><td>${esc(u.tier || '-')}</td><td>${esc(u.accreditation || '-')}</td>
+          <tr class="${u.active ? '' : 'inactive'}">
+            <td>${esc(u.name)}${!u.active ? ' <span class="badge INACTIVE">nonaktif</span>' : ''}</td><td>${esc(u.tier || '-')}</td><td>${esc(u.accreditation || '-')}</td>
             <td>${u.min_gpa ?? '-'}</td><td>${esc(u.location || '-')}</td>
-            <td><button class="btn btn-danger btn-xs" onclick="deactivateKnowledgeUniversity(${u.id})">Nonaktifkan</button></td>
+            <td>${u.active ? `<button class="btn btn-danger btn-xs" onclick="deactivateKnowledgeUniversity(${u.id})">Nonaktifkan</button>`
+                           : `<button class="btn btn-secondary btn-xs" onclick="activateKnowledgeUniversity(${u.id})">Aktifkan</button>`}</td>
           </tr>`).join('') : `<tr><td colspan="6" class="page-desc">Belum ada data universitas.</td></tr>`}
       </tbody>
     </table>`;
   wireImportCard('universities');
 }
-
 async function createKnowledgeUniversity() {
   const payload = {
     name: document.getElementById('uniName').value.trim(),
@@ -1818,29 +2286,23 @@ async function createKnowledgeUniversity() {
     location: document.getElementById('uniLoc').value.trim(),
   };
   if (!payload.name) { toast('Nama universitas wajib diisi.', true); return; }
-  try {
-    await api('/api/knowledge/universities', { method: 'POST', body: JSON.stringify(payload) });
-    toast('Universitas ditambahkan.');
-    renderKnowledge();
-  } catch (e) {
-    toast('Gagal menyimpan: ' + e.message, true);
-  }
+  try { await api('/api/knowledge/universities', { method: 'POST', body: JSON.stringify(payload) }); toast('Universitas ditambahkan.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal menyimpan: ' + e.message, true); }
 }
-
 async function deactivateKnowledgeUniversity(id) {
-  try {
-    await api(`/api/knowledge/universities/${id}`, { method: 'DELETE' });
-    toast('Universitas dinonaktifkan.');
-    renderKnowledge();
-  } catch (e) {
-    toast('Gagal: ' + e.message, true);
-  }
+  try { await api(`/api/knowledge/universities/${id}`, { method: 'DELETE' }); toast('Universitas dinonaktifkan.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal: ' + e.message, true); }
+}
+async function activateKnowledgeUniversity(id) {
+  try { await api(`/api/knowledge/universities/${id}/activate`, { method: 'POST' }); toast('Universitas diaktifkan kembali.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal: ' + e.message, true); }
 }
 
+// -------------------------------------------------- Bank Pertanyaan Interview
 async function loadKnowledgeQuestionTab(body) {
-  const items = await api('/api/knowledge/interview-questions');
+  const items = await api('/api/knowledge/interview-questions?active_only=false');
   body.innerHTML = `
-        <div class="card" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:14px">
       <div class="section-title">Tambah Pertanyaan Interview</div>
       <div class="form-grid single">
         <div class="field"><label>Pertanyaan</label><textarea id="qText" placeholder="mis. Ceritakan pengalaman Anda memimpin tim..."></textarea></div>
@@ -1848,7 +2310,7 @@ async function loadKnowledgeQuestionTab(body) {
         <div class="field"><label>Stage Disarankan</label>
           <select id="qStage"><option value="HR_INTERVIEW">HR Interview</option><option value="USER_INTERVIEW">User Interview</option><option value="ASSESSMENT">Assessment</option></select>
         </div>
-        <div class="field"><label>Level Jabatan</label><input id="qLevel" placeholder="mis. Staff / Supervisor / Manager" /></div>
+        ${pickerField('qLevel', 'Level Jabatan', 'job-levels', 'mis. Supervisor')}
         <div class="field"><label>Tipe</label>
           <select id="qType"><option>Behavioral</option><option>Technical</option><option>Situational</option></select>
         </div>
@@ -1859,16 +2321,17 @@ async function loadKnowledgeQuestionTab(body) {
     ${importCard('interview-questions', 'Bank Pertanyaan Interview')}
     <div class="grid grid-2">
       ${items.length ? items.map(q => `
-        <div class="card">
-          <div class="section-title" style="font-size:14px">${esc(q.question_text)}</div>
+        <div class="card ${q.active ? '' : 'inactive'}">
+          <div class="section-title" style="font-size:14px">${esc(q.question_text)}${!q.active ? ' <span class="badge INACTIVE">nonaktif</span>' : ''}</div>
           <p class="page-desc">${esc(q.competency || '-')} · ${esc(q.stage_code || '-')} · ${esc(q.question_type || '-')} · dipakai ${q.times_used}x</p>
           ${q.ideal_answer_notes ? `<p class="page-desc"><em>Catatan: ${esc(q.ideal_answer_notes)}</em></p>` : ''}
-          <button class="btn btn-danger btn-xs" style="margin-top:6px" onclick="deactivateKnowledgeQuestion(${q.id})">Nonaktifkan</button>
+          ${q.active ? `<button class="btn btn-danger btn-xs" style="margin-top:6px" onclick="deactivateKnowledgeQuestion(${q.id})">Nonaktifkan</button>`
+                      : `<button class="btn btn-secondary btn-xs" style="margin-top:6px" onclick="activateKnowledgeQuestion(${q.id})">Aktifkan</button>`}
         </div>`).join('') : '<div class="empty-state"><div class="empty-state-icon">·</div>Belum ada pertanyaan di bank interview.</div>'}
     </div>`;
+  fillPickerFields(document, await getMasterOptions());
   wireImportCard('interview-questions');
 }
-
 async function createKnowledgeQuestion() {
   const payload = {
     question_text: document.getElementById('qText').value.trim(),
@@ -1879,25 +2342,180 @@ async function createKnowledgeQuestion() {
     ideal_answer_notes: document.getElementById('qNotes').value.trim(),
   };
   if (!payload.question_text) { toast('Teks pertanyaan wajib diisi.', true); return; }
-  try {
-    await api('/api/knowledge/interview-questions', { method: 'POST', body: JSON.stringify(payload) });
-    toast('Pertanyaan ditambahkan ke bank interview.');
-    renderKnowledge();
-  } catch (e) {
-    toast('Gagal menyimpan: ' + e.message, true);
-  }
+  try { await api('/api/knowledge/interview-questions', { method: 'POST', body: JSON.stringify(payload) }); toast('Pertanyaan ditambahkan ke bank interview.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal menyimpan: ' + e.message, true); }
 }
-
 async function deactivateKnowledgeQuestion(id) {
-  try {
-    await api(`/api/knowledge/interview-questions/${id}`, { method: 'DELETE' });
-    toast('Pertanyaan dinonaktifkan.');
-    renderKnowledge();
-  } catch (e) {
-    toast('Gagal: ' + e.message, true);
-  }
+  try { await api(`/api/knowledge/interview-questions/${id}`, { method: 'DELETE' }); toast('Pertanyaan dinonaktifkan.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal: ' + e.message, true); }
+}
+async function activateKnowledgeQuestion(id) {
+  try { await api(`/api/knowledge/interview-questions/${id}/activate`, { method: 'POST' }); toast('Pertanyaan diaktifkan kembali.'); loadKnowledgeTab(); }
+  catch (e) { toast('Gagal: ' + e.message, true); }
 }
 
+// -------------------------------------------------- generic master-data tab
+let masterSearchQ = '';
+
+function masterCategoryMeta(slug) { return knowledgeCategoriesCache.find(c => c.slug === slug); }
+
+async function loadMasterCategoryTab(body, slug) {
+  const cat = masterCategoryMeta(slug);
+  if (!cat) { body.innerHTML = '<div class="empty-state">Kategori tidak dikenal.</div>'; return; }
+  masterSearchQ = '';
+  const items = await api(`/api/knowledge/master?category=${slug}&active_only=false`);
+  body.innerHTML = `
+    <div class="card" style="margin-bottom:14px">
+      <div class="section-title">Tambah ${esc(cat.label)}</div>
+      <p class="page-desc" style="margin:-6px 0 10px">${esc(cat.description)}</p>
+      <div class="form-grid single">
+        <div class="field"><label>Nama</label><input id="mNewName" placeholder="mis. ${esc(cat.label)} baru" /></div>
+        ${cat.value_label ? `<div class="field"><label>${esc(cat.value_label)}${cat.value_required ? ' *' : ' (opsional)'}</label><input id="mNewValue" type="number" step="any" placeholder="${esc(cat.value_hint || '')}" /></div>` : ''}
+        <div class="field"><label>Deskripsi (opsional)</label><input id="mNewDesc" placeholder="Catatan singkat" /></div>
+      </div>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="createMasterItem('${slug}')">Simpan</button>
+    </div>
+    ${masterImportCard(slug, cat.label)}
+    <div class="toolbar"><input class="grow" id="mSearchQ" placeholder="Cari ${esc(cat.label.toLowerCase())}..." /></div>
+    <div id="mList">Memuat...</div>`;
+  document.getElementById('mSearchQ').addEventListener('input', debounce(() => { masterSearchQ = document.getElementById('mSearchQ').value; renderMasterList(slug, cat); }, 200));
+  wireMasterImportCard(slug);
+  window.__masterItems = items;
+  renderMasterList(slug, cat);
+}
+
+function renderMasterList(slug, cat) {
+  const list = document.getElementById('mList');
+  if (!list) return;
+  const q = masterSearchQ.trim().toLowerCase();
+  const items = (window.__masterItems || []).filter(m => !q || m.name.toLowerCase().includes(q) || (m.description || '').toLowerCase().includes(q))
+    .sort((a, b) => (cat.value_label ? (a.value ?? 0) - (b.value ?? 0) : 0) || a.name.localeCompare(b.name));
+  if (!items.length) { list.innerHTML = `<div class="empty-state"><div class="empty-state-icon">·</div>${masterSearchQ ? 'Tidak ada yang cocok.' : `Belum ada data ${esc(cat.label)}.`}</div>`; return; }
+  list.innerHTML = `<div class="card table-wrap"><table class="data-table">
+    <thead><tr><th>Nama</th>${cat.value_label ? `<th>${esc(cat.value_label)}</th>` : ''}<th>Deskripsi</th><th>Sumber</th><th></th></tr></thead>
+    <tbody>${items.map(m => `
+      <tr class="${m.active ? '' : 'inactive'}">
+        <td><strong>${esc(m.name)}</strong>${m.system ? ' <span class="badge SYSTEM">bawaan</span>' : ''}${!m.active ? ' <span class="badge INACTIVE">nonaktif</span>' : ''}</td>
+        ${cat.value_label ? `<td>${m.value ?? '-'}</td>` : ''}
+        <td class="page-desc">${esc(m.description || '-')}</td>
+        <td class="source-tag">${{ starter: 'starter', manual: 'manual', import: 'import', auto: 'otomatis' }[m.source] || esc(m.source)}</td>
+        <td class="row-actions">
+          ${!m.system ? `<button class="btn btn-secondary btn-xs" onclick="editMasterItem('${slug}', ${m.id})">Edit</button>` : ''}
+          ${m.active ? (m.system ? '' : `<button class="btn btn-danger btn-xs" onclick="deactivateMasterItem('${slug}', ${m.id})">Nonaktifkan</button>`)
+                     : `<button class="btn btn-secondary btn-xs" onclick="activateMasterItem('${slug}', ${m.id})">Aktifkan</button>`}
+        </td>
+      </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+async function createMasterItem(slug) {
+  const cat = masterCategoryMeta(slug);
+  const name = document.getElementById('mNewName').value.trim();
+  if (!name) { toast('Nama wajib diisi.', true); return; }
+  const payload = { category: slug, name, description: document.getElementById('mNewDesc').value.trim() };
+  if (cat.value_label) { const raw = document.getElementById('mNewValue').value.trim(); if (raw) payload.value = Number(raw); }
+  try {
+    await api('/api/knowledge/master', { method: 'POST', body: JSON.stringify(payload) });
+    toast(`${cat.label} ditambahkan.`);
+    invalidateMasterOptions();
+    document.getElementById('mNewName').value = ''; if (document.getElementById('mNewValue')) document.getElementById('mNewValue').value = ''; document.getElementById('mNewDesc').value = '';
+    window.__masterItems = await api(`/api/knowledge/master?category=${slug}&active_only=false`);
+    renderMasterList(slug, cat);
+    renderKnowledgeNav();
+  } catch (e) { toast('Gagal menyimpan: ' + e.message, true); }
+}
+
+function editMasterItem(slug, id) {
+  const cat = masterCategoryMeta(slug);
+  const m = (window.__masterItems || []).find(x => x.id === id);
+  if (!m) return;
+  openModal(`
+    <div class="page-eyebrow">${esc(cat.label)}</div>
+    <div class="page-title" style="font-size:18px">Edit</div>
+    <div class="form-grid single" style="margin-top:10px">
+      <div class="field"><label>Nama</label><input id="mEditName" value="${esc(m.name)}" /></div>
+      ${cat.value_label ? `<div class="field"><label>${esc(cat.value_label)}</label><input id="mEditValue" type="number" step="any" value="${m.value ?? ''}" /></div>` : ''}
+      <div class="field"><label>Deskripsi</label><input id="mEditDesc" value="${esc(m.description || '')}" /></div>
+    </div>
+    <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveMasterItem('${slug}', ${id})">Simpan</button>
+  `, { push: true });
+}
+async function saveMasterItem(slug, id) {
+  const cat = masterCategoryMeta(slug);
+  const payload = { name: document.getElementById('mEditName').value.trim(), description: document.getElementById('mEditDesc').value.trim() };
+  if (cat.value_label) { const raw = document.getElementById('mEditValue').value.trim(); payload.value = raw === '' ? null : Number(raw); }
+  try {
+    await api(`/api/knowledge/master/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    toast('Tersimpan.');
+    invalidateMasterOptions();
+    closeModal();
+    window.__masterItems = await api(`/api/knowledge/master?category=${slug}&active_only=false`);
+    renderMasterList(slug, cat);
+  } catch (e) { toast('Gagal menyimpan: ' + e.message, true); }
+}
+async function deactivateMasterItem(slug, id) {
+  const cat = masterCategoryMeta(slug);
+  try {
+    await api(`/api/knowledge/master/${id}`, { method: 'DELETE' });
+    toast(`${cat.label} dinonaktifkan.`);
+    invalidateMasterOptions();
+    window.__masterItems = await api(`/api/knowledge/master?category=${slug}&active_only=false`);
+    renderMasterList(slug, cat);
+    renderKnowledgeNav();
+  } catch (e) { toast('Gagal: ' + e.message, true); }
+}
+async function activateMasterItem(slug, id) {
+  const cat = masterCategoryMeta(slug);
+  try {
+    await api(`/api/knowledge/master/${id}/activate`, { method: 'POST' });
+    toast(`${cat.label} diaktifkan kembali.`);
+    invalidateMasterOptions();
+    window.__masterItems = await api(`/api/knowledge/master?category=${slug}&active_only=false`);
+    renderMasterList(slug, cat);
+    renderKnowledgeNav();
+  } catch (e) { toast('Gagal: ' + e.message, true); }
+}
+
+function masterImportCard(slug, label) {
+  return `
+    <details class="import-box">
+      <summary>⬆ Import ${esc(label)} dari Excel</summary>
+      <p class="page-desc" style="margin-top:8px">Untuk menambahkan banyak data sekaligus dari file eksternal.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="downloadFile('/api/knowledge/master/${slug}/import-template.xlsx', 'MRI_Master_${slug}_Template.xlsx')">⬇ Download Template</button>
+        <input type="file" id="mImport_${slug}_file" accept=".xlsx" style="display:none" />
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('mImport_${slug}_file').click()">⬆ Upload &amp; Import Excel</button>
+      </div>
+      <div id="mImport_${slug}_result" style="margin-top:10px"></div>
+    </details>`;
+}
+function wireMasterImportCard(slug) {
+  const input = document.getElementById(`mImport_${slug}_file`);
+  if (input) input.addEventListener('change', (e) => { if (e.target.files[0]) handleMasterImport(slug, e.target.files[0]); });
+}
+async function handleMasterImport(slug, file) {
+  const cat = masterCategoryMeta(slug);
+  const box = document.getElementById(`mImport_${slug}_result`);
+  box.innerHTML = `<div class="page-desc">Memproses file Excel...</div>`;
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const res = await api(`/api/knowledge/master/${slug}/import`, { method: 'POST', body: fd });
+    box.innerHTML = importResultHtml(res);
+    toast(`Import selesai: ${res.imported_count} ${cat.label.toLowerCase()} baru ditambahkan.`);
+    invalidateMasterOptions();
+    window.__masterItems = await api(`/api/knowledge/master?category=${slug}&active_only=false`);
+    renderMasterList(slug, cat);
+    renderKnowledgeNav();
+  } catch (e) { box.innerHTML = `<div class="empty-state">Gagal import: ${esc(e.message)}</div>`; }
+}
+function importResultHtml(res) {
+  return `<div class="card" style="background:var(--surface-raised)">
+    <div class="grid grid-4" style="margin:6px 0">${kpiCard('Total Baris', res.total_rows)}${kpiCard('Valid', res.valid)}${kpiCard('Duplicate', res.duplicate)}${kpiCard('Invalid', res.invalid)}</div>
+    ${res.errors.length ? `<div class="table-wrap"><table><thead><tr>${res.errors[0].sheet ? '<th>Sheet</th>' : ''}<th>Baris</th><th>Status</th><th>Keterangan</th></tr></thead><tbody>
+      ${res.errors.map(e => `<tr>${e.sheet ? `<td>${esc(e.sheet)}</td>` : ''}<td>${e.row}</td><td><span class="badge ${e.status === 'DUPLICATE' ? 'TALENT_POOL' : 'REJECT'}">${e.status}</span></td><td class="page-desc">${esc(e.reason)}</td></tr>`).join('')}
+    </tbody></table></div>` : '<p class="page-desc">Semua baris berhasil diimport tanpa error.</p>'}
+  </div>`;
+}
 
 // ------------------------------------------------------------------
 // Backup reminder banner
@@ -1913,8 +2531,15 @@ function refreshBackupBanner() {
 }
 
 function openPage(page) {
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  routes[page]();
+  document.querySelectorAll('.nav-item').forEach(b => {
+    const on = b.dataset.page === page;
+    b.classList.toggle('active', on);
+    if (on) updateMobileTitle(b);
+  });
+  setNav(false);
+  closeAllModals();
+  window.scrollTo(0, 0);
+  return routes[page]();
 }
 
 // ------------------------------------------------------------------

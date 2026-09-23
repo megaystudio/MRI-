@@ -336,10 +336,10 @@ export const DEFAULT_WEIGHTS = {
   soft_skills: 0.10, leadership: 0.10, certification: 0.10,
 };
 
-function scoreEducation(candidateLevel, minLevel) {
+function scoreEducation(candidateLevel, minLevel, ranks = EDU_RANK) {
   if (!minLevel) return [100.0, 'Tidak ada syarat pendidikan minimum.'];
-  const candRank = EDU_RANK[candidateLevel] || 0;
-  const minRank = EDU_RANK[minLevel] || 0;
+  const candRank = ranks[candidateLevel] || 0;
+  const minRank = ranks[minLevel] || 0;
   if (candRank >= minRank && candRank > 0) return [100.0, `Pendidikan kandidat (${candidateLevel}) memenuhi minimum (${minLevel}).`];
   if (candRank === 0) return [40.0, 'Tingkat pendidikan tidak terdeteksi jelas dari CV.'];
   return [Math.max(0.0, 100.0 - (minRank - candRank) * 25), `Pendidikan kandidat (${candidateLevel}) di bawah minimum (${minLevel}).`];
@@ -376,14 +376,17 @@ function scoreListOverlap(candidateItems, requiredItems, label) {
  *             certifications:[names], has_leadership_experience: bool}
  * vacancy:   JobRequirement-shaped dict.
  */
-export function screenCandidate(candidate, vacancy) {
+export function screenCandidate(candidate, vacancy, educationRanks = null) {
+  // educationRanks (optional): {level: rank} from the Knowledge Center, so extra levels such as 'D4' are ranked too.
+  // Built-in levels always win, so the default behaviour (and parity with the original engine) is unchanged.
+  const ranks = educationRanks ? { ...educationRanks, ...EDU_RANK } : EDU_RANK;
   const rawWeights = vacancy.criteria_weights && Object.keys(vacancy.criteria_weights).length ? vacancy.criteria_weights : DEFAULT_WEIGHTS;
   const weights = { ...DEFAULT_WEIGHTS };
   for (const [k, v] of Object.entries(rawWeights)) if (v !== null && v !== undefined) weights[k] = v;
 
   const candYears = candidate.total_experience_years || 0;
   const minYears = vacancy.min_experience_years || 0;
-  const [eduScore, eduNote] = scoreEducation(candidate.highest_education, vacancy.min_education);
+  const [eduScore, eduNote] = scoreEducation(candidate.highest_education, vacancy.min_education, ranks);
   const [expScore, expNote] = scoreExperience(candYears, minYears);
   const [techScore, techMatched, techNote] = scoreListOverlap(candidate.skills || [], vacancy.technical_skills || [], 'keahlian teknis');
   const [softScore, softMatched, softNote] = scoreListOverlap(candidate.skills || [], vacancy.soft_skills || [], 'soft skill');

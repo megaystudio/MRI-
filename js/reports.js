@@ -88,6 +88,63 @@ function normalizeCell(v) {
 }
 
 /**
+ * Template workbook with several sheets: sheets = [{title, headers, example, validations?:[{col, list}]}].
+ * `validations` adds Excel drop-down lists to a column (1-based col) for rows 2..1000.
+ * `notes` becomes a 'Petunjuk' sheet; `refSheet` = {title, columns:[{header, values:[...]}]} becomes a read-only reference sheet.
+ */
+export async function buildMultiSheetTemplate(sheets, notes = null, refSheet = null) {
+  const wb = await newWorkbook();
+  for (const sh of sheets) {
+    const ws = wb.addWorksheet(sh.title.slice(0, 31));
+    fillSheet(ws, sh.headers, [sh.example]);
+    for (let c = 1; c <= sh.headers.length; c++) ws.getCell(2, c).font = { italic: true, color: { argb: 'FF888888' } };
+    for (const v of sh.validations || []) {
+      for (let r = 2; r <= 1000; r++) {
+        ws.getCell(r, v.col).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${v.list.join(',')}"`] };
+      }
+    }
+  }
+  if (notes) {
+    const nws = wb.addWorksheet('Petunjuk');
+    notes.forEach((line, i) => { nws.getCell(i + 1, 1).value = line; });
+    nws.getColumn(1).width = 90;
+  }
+  if (refSheet) {
+    const rws = wb.addWorksheet(refSheet.title.slice(0, 31));
+    const cols = refSheet.columns;
+    rws.addRow(cols.map(c => c.header));
+    rws.getRow(1).eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E2631' } };
+      cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+    });
+    const maxLen = Math.max(0, ...cols.map(c => c.values.length));
+    for (let i = 0; i < maxLen; i++) rws.addRow(cols.map(c => (i < c.values.length ? c.values[i] : null)));
+    cols.forEach((c, i) => { rws.getColumn(i + 1).width = Math.min(Math.max(c.header.length, ...c.values.map(v => String(v).length), 10) + 3, 40); });
+    rws.views = [{ state: 'frozen', ySplit: 1 }];
+  }
+  return toBytes(wb);
+}
+
+/** Reads every sheet of an .xlsx: Map(sheetName -> [{row, cells}]) from row 2 on (row 1 = headers), blank rows skipped. */
+export async function readWorkbookSheets(arrayBuffer, width) {
+  const ExcelJS = await getExcelJS();
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(arrayBuffer);
+  const out = new Map();
+  for (const ws of wb.worksheets) {
+    const rows = [];
+    ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber < 2) return;
+      const cells = [];
+      for (let i = 1; i <= width; i++) cells.push(normalizeCell(row.getCell(i).value));
+      rows.push({ row: rowNumber, cells });
+    });
+    out.set(ws.name, rows);
+  }
+  return out;
+}
+
+/**
  * Reads an .xlsx into {rows:[{row:<excel row number>, cells:[...]}]} starting
  * from row 2 (row 1 = headers). Blank rows are skipped. Uses the sheet named
  * `preferredSheet` when present, otherwise the first sheet.

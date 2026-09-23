@@ -8,6 +8,7 @@ import * as DB from './db.js';
 import { route, HttpError, ilike, requireFound, ownerName, logAudit, fileResult, XLSX_MIME, rowIsBlank, cellText } from './core.js';
 import { buildExcelTemplate, readWorkbookRows } from './reports.js';
 import { nowIso } from './util.js';
+import { registerMasterValues } from './svc_master.js';
 
 // -------------------------------------------------------- job criteria -----
 
@@ -29,6 +30,16 @@ const criteriaDict = (k) => ({
   criteria_weights: k.criteria_weights || {}, minimum_score: k.minimum_score, passing_score: k.passing_score,
   notes: k.notes, active: k.active, times_used: k.times_used, created_by: k.created_by, created_at: k.created_at,
 });
+
+/** Keeps the Knowledge Center master lists in sync with what templates use (adds only what is missing). */
+function registerCriteriaValues(k) {
+  registerMasterValues('positions', k.position);
+  registerMasterValues('departments', k.department);
+  registerMasterValues('job-levels', k.job_level);
+  registerMasterValues('hard-skills', k.technical_skills);
+  registerMasterValues('soft-skills', k.soft_skills);
+  registerMasterValues('certifications', k.certifications_required);
+}
 
 const activeOnly = (q) => q.active_only === undefined || q.active_only === 'true' || q.active_only === '1';
 const splitCsv = (s) => s.split(',').map(x => x.trim()).filter(Boolean);
@@ -84,6 +95,7 @@ route('POST', '/api/knowledge/job-criteria', async ({ body }) => {
     minimum_score: body.minimum_score ?? 60, passing_score: body.passing_score ?? 75, notes: body.notes ?? null,
     active: true, created_by: ownerName(), created_at: nowIso(), updated_at: nowIso(), times_used: 0,
   });
+  registerCriteriaValues(k);
   logAudit('KnowledgeJobCriteria', k.id, 'CREATE', ownerName(), `Template '${k.title}' dibuat`);
   return criteriaDict(k);
 });
@@ -95,6 +107,7 @@ route('PUT', '/api/knowledge/job-criteria/:id', async ({ params, body }) => {
     'preferred_criteria', 'criteria_weights', 'minimum_score', 'passing_score', 'notes']) if (f in body) k[f] = body[f];
   k.updated_at = nowIso();
   DB.save('knowledge_job_criteria', k);
+  registerCriteriaValues(k);
   logAudit('KnowledgeJobCriteria', k.id, 'UPDATE', ownerName());
   return criteriaDict(k);
 });
@@ -103,6 +116,13 @@ route('DELETE', '/api/knowledge/job-criteria/:id', async ({ params }) => {
   const k = requireFound(DB.get('knowledge_job_criteria', params.id), 'Template kriteria jabatan tidak ditemukan.');
   k.active = false; DB.save('knowledge_job_criteria', k);
   logAudit('KnowledgeJobCriteria', k.id, 'DEACTIVATE', ownerName());
+  return { status: 'ok' };
+});
+
+route('POST', '/api/knowledge/job-criteria/:id/activate', async ({ params }) => {
+  const k = requireFound(DB.get('knowledge_job_criteria', params.id), 'Template kriteria jabatan tidak ditemukan.');
+  k.active = true; k.updated_at = nowIso(); DB.save('knowledge_job_criteria', k);
+  logAudit('KnowledgeJobCriteria', k.id, 'ACTIVATE', ownerName());
   return { status: 'ok' };
 });
 
@@ -127,6 +147,7 @@ route('POST', '/api/knowledge/job-criteria/import', async ({ body }) => {
       preferred_criteria: [], criteria_weights: {}, passing_score: passScore, minimum_score: minScore, notes: cellText(cells, 12) || null,
       active: true, created_by: ownerName(), created_at: nowIso(), updated_at: nowIso(), times_used: 0,
     });
+    registerCriteriaValues(k);
     valid++; imported.push({ row: idx, id: k.id, title });
   }
   logAudit('KnowledgeJobCriteria', 0, 'EXCEL_IMPORT', ownerName(), `${valid} imported, ${dup} duplicate, ${invalid} invalid`, { filename: file.name });
@@ -168,6 +189,13 @@ route('DELETE', '/api/knowledge/universities/:id', async ({ params }) => {
   const u = requireFound(DB.get('knowledge_universities', params.id), 'Universitas tidak ditemukan.');
   u.active = false; DB.save('knowledge_universities', u);
   logAudit('KnowledgeUniversity', u.id, 'DEACTIVATE', ownerName());
+  return { status: 'ok' };
+});
+
+route('POST', '/api/knowledge/universities/:id/activate', async ({ params }) => {
+  const u = requireFound(DB.get('knowledge_universities', params.id), 'Universitas tidak ditemukan.');
+  u.active = true; u.updated_at = nowIso(); DB.save('knowledge_universities', u);
+  logAudit('KnowledgeUniversity', u.id, 'ACTIVATE', ownerName());
   return { status: 'ok' };
 });
 
@@ -254,6 +282,13 @@ route('DELETE', '/api/knowledge/interview-questions/:id', async ({ params }) => 
   const item = requireFound(DB.get('knowledge_interview_questions', params.id), 'Pertanyaan tidak ditemukan.');
   item.active = false; DB.save('knowledge_interview_questions', item);
   logAudit('KnowledgeInterviewQuestion', item.id, 'DEACTIVATE', ownerName());
+  return { status: 'ok' };
+});
+
+route('POST', '/api/knowledge/interview-questions/:id/activate', async ({ params }) => {
+  const item = requireFound(DB.get('knowledge_interview_questions', params.id), 'Pertanyaan tidak ditemukan.');
+  item.active = true; item.updated_at = nowIso(); DB.save('knowledge_interview_questions', item);
+  logAudit('KnowledgeInterviewQuestion', item.id, 'ACTIVATE', ownerName());
   return { status: 'ok' };
 });
 

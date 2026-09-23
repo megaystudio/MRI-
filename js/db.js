@@ -18,7 +18,9 @@
  */
 
 export const DB_NAME_DEFAULT = 'mri-workspace';
-export const DB_VERSION = 1;
+// v2: adds the 'knowledge_master' store (Knowledge Center master data). Existing stores are untouched:
+// onupgradeneeded only creates the stores that do not exist yet, so data from v1 is preserved.
+export const DB_VERSION = 2;
 
 export const TABLES = [
   'candidates',
@@ -35,6 +37,7 @@ export const TABLES = [
   'knowledge_job_criteria',
   'knowledge_universities',
   'knowledge_interview_questions',
+  'knowledge_master',
 ];
 const META_STORE = 'meta';
 const FILE_STORE = 'cv_files';

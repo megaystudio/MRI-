@@ -1,6 +1,6 @@
 {
   "name": "mri-personal-workspace",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "MRI — Megay Recruitment Intelligent: workspace rekrutmen pribadi (static web app, data di browser).",
   "type": "module",
